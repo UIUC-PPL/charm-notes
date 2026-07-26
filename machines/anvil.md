@@ -59,6 +59,7 @@ has an explicit pre-2.0 API branch).
 | Tree | Runtime | Purpose |
 |---|---|---|
 | `recharm/charm/` | reconverse | the real Charm++ install; `charm/{bin,lib,include}` are symlinks into `charm/reconverse-linux-x86_64/` |
+| `recharm/tracedcharm/` | reconverse | **same commits, tracing enabled** — for Projections runs; see below |
 | `recharm/reconverse-tests-build/` | reconverse | standalone reconverse + tests, registration cache **OFF** — the A/B baseline, keep untouched |
 | `recharm/reconverse-regcache-build/` | reconverse | same, registration cache **ON** |
 
@@ -88,6 +89,48 @@ rebuild:
 
 `lcrun` is at `<build>/_deps/lci-src/lcrun`, not in `bin/` (`$LCRUN` in
 env.sh). On compute nodes prefer `srun --mpi=pmi2` over `lcrun`.
+
+### tracedcharm — the Projections-enabled twin (built 2026-07-26)
+
+`recharm/tracedcharm/` is a second charm at the SAME commits (local clones of
+`recharm/charm` and its reconverse checkout, so identical by construction),
+built with tracing on. Script: `recharm/bench/build-tracedcharm.sh`.
+
+    ./build charm++ reconverse-linux-x86_64 --with-production --enable-tracing -j8 \
+            --with-fetch-reconverse-dir=$PWD/reconverse \
+            --with-cmake-args="-DLCI_USE_REG_CACHE=ON -DRECONVERSE_ENABLE_CPU_AFFINITY=ON -DHWLOC_ROOT_DIR=$HWLOC_ROOT"
+
+Two things about charm's `./build` that are easy to get wrong:
+
+- `--enable-tracing` is the supported flag (`buildcmake:335` -> `-DTRACING=1`).
+  `TRACING` is a cache STRING that defaults to **0 for any non-Debug build**
+  (`CMakeLists.txt:190-195`), so a `--with-production` build has NO trace
+  modules and `charmc -tracemode projections` aborts with "No such tracemode".
+- Raw `-D` options must go through **`--with-cmake-args="..."`**. Unrecognised
+  arguments are silently appended to the COMPILER flags instead
+  (`buildcmake:487-489`), so `-DLCI_USE_REG_CACHE=ON` passed directly becomes a
+  preprocessor define and the cmake option stays at its default.
+
+Verified present after the build: `libtrace-projections.a` plus
+trace-{summary,simple,counter,memory,utilization,projector,controlPoints,perfReport}.
+
+Why a separate tree rather than flipping the option in place: tracing sets
+`CMK_TRACE_ENABLED`, which compiles trace hooks into `libck`. It is
+ABI-affecting, so the whole app stack must be rebuilt against whichever charm
+it links. Two trees make switching a `CHARM_HOME` change plus an app rebuild,
+instead of a charm rebuild each way.
+
+To build the app stack traced, use the same commands as the production stack
+with `CHARM=$RECHARM/tracedcharm`, and add `-tracemode projections`. fof3's
+Makefile has no tracing target, but `OPTS` includes `$(MAKE_OPTS)`, so:
+
+    cd paratreet2/examples/fof3 && make clean && \
+        CHARM_HOME=$RECHARM/tracedcharm make MAKE_OPTS="-tracemode projections"
+
+HAZARD: rebuilding the app in place replaces the production `FoF3` binary with
+a traced one, which carries tracing overhead. Never leave the stack traced if
+timing runs are queued or expected — rebuild back against `recharm/charm`
+afterwards, or keep a separate stack copy.
 
 NOTE: an older revision of this profile referred to `$HOME/charm_reconverse`
 as "Ritvik's reconverse build used by the FoF sweeps". No such directory is
