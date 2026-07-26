@@ -468,3 +468,42 @@ profiles).
   in the FoF component histogram, the label's sign proved most keys
   (process-local components) never needed cross-process summing at all
   — 99.97% of a 400 MB gather vanished before any transport question.
+
+## Reconverse/LCI: registration paths are the soft spot (2026-07-26)
+
+Cross-machine finding (Anvil + macOS laptop, same day, same subsystem):
+
+- FIRST CHECK when diagnosing reconverse/LCI transfer costs:
+  `grep LCI_USE_REG_CACHE <build>/CMakeCache.txt`. Builds have shipped
+  with it OFF; on a real RDMA fabric (Anvil) that means full memory
+  registration per transfer — the observed "heavy pingpong costs" —
+  while on the macOS OFI-tcp provider registration is near-free, so
+  laptop numbers won't show the problem.
+- Plain message-passing on reconverse is SOLID and fast: charm++
+  pingpong cross-process loopback roundtrips ~54 us on macOS/tcp for
+  arrays, chares, groups — beating classic netlrts (~120-260 us,
+  comm-thread relay) on the same machine. Intra-process both are
+  sub-microsecond.
+- The ncpy/zero-copy paths are the least-exercised code: per-send
+  zero-copy API costs ~2x on small payloads (extra rendezvous trip —
+  expected), but PERSISTENT registered buffers (CkNcpyBuffer with
+  CK_BUFFER_REG / CK_BUFFER_NODEREG, as in benchmarks/charm++/
+  pingpong's PingN constructor) HANG the phase outright on the OFI-tcp
+  backend — both ranks poll in CsdScheduler -> LCI progress -> kevent
+  for a message that never arrives.
+- Elimination discipline that localized it (reusable pattern): the
+  hanging benchmark phase differed from working application traffic in
+  three ways — nodegroup routing, [exclusive] entries, ncpy
+  registration. A 30-line minimal pingpong testing plain AND exclusive
+  nodegroup entries passed both (54-92 us), leaving registration as
+  the culprit. Write the minimal contrast test BEFORE blaming the
+  obvious suspect: the "obvious" ones (nodegroups, exclusive) were
+  innocent.
+- Practical: applications using plain marshalled/message sends
+  (paratreet2 included) are unaffected. Avoid CkNcpyBuffer persistent
+  registration on reconverse until fixed; reconverse issue filed with
+  reproducers.
+- Diagnosis mechanics on macOS: a hung-looking benchmark under a PIPE
+  shows nothing (block buffering) — rerun under `script -q <log> <cmd>`
+  to get a pseudo-TTY and per-line flushes; `sample <pid>` gives the
+  polling stack without lldb.
