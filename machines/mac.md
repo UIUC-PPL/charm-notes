@@ -53,7 +53,7 @@ directory. Built `--with-production`. `lcrun` is at
   accumulated orphans).
 
 ## macOS platform hazards (details in
-~/software/tutorialcharmclaude/notes/charm_best_practices.md)
+~/software/charm-notes/charm_best_practices.md)
 
 - SIP strips DYLD_LIBRARY_PATH under lldb; set it inside lldb via
   `settings set target.env-vars ...`.
@@ -74,7 +74,8 @@ directory. Built `--with-production`. `lcrun` is at
   reconverse-stack clones for local reconverse testing.
 - `~/software/seedbalancing/` — seed balancing in reconverse; design doc
   SEEDLB_DESIGN.md.
-- `~/software/tutorialcharmclaude/notes/` — shared Charm++ practitioner
-  notes (charm_best_practices.md, syntax_quick_ref.md); update
-  best-practices when a session earns a general lesson.
+- `~/software/charm-notes/` — clone of UIUC-PPL/charm-notes (the shared
+  practitioner notes + this machine profile); pull before appending,
+  push after. Old copies in ~/software/tutorialcharmclaude/notes/ are
+  pointer stubs.
 - `~/software/DiffusionGraphfiles/` — deeper seed-balancing handoff notes.
