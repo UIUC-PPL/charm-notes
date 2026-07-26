@@ -507,3 +507,134 @@ Cross-machine finding (Anvil + macOS laptop, same day, same subsystem):
   shows nothing (block buffering) — rerun under `script -q <log> <cmd>`
   to get a pseudo-TTY and per-line flushes; `sample <pid>` gives the
   polling stack without lldb.
+
+### Same subsystem, quantified on real RDMA hardware (Anvil, 2026-07-26)
+
+Companion to the section above, which flagged `LCI_USE_REG_CACHE` as the
+first thing to check. Here is what it actually costs and why, measured on
+InfiniBand HDR rather than the macOS tcp provider. Anvil-specific mechanics
+live in `machines/anvil.md`; the mechanisms below are general to
+reconverse/LCI.
+
+- The cost is TWO `ibv_reg_mr` calls per message, not one: the sender
+  registers at `rendezvous.hpp:210` and the receiver at `:127`, every
+  message, with no cache. On EPYC/HDR each `ibv_reg_mr` is ~15 us and each
+  `ibv_dereg_mr` ~13 us, and that cost is FLAT from 4 KB to 64 KB — so the
+  penalty is a fixed ~45-50 us adder, not a bandwidth effect. A
+  size-independent adder at tens of microseconds is the signature; look for
+  registration, not the fabric.
+- `LCI_USE_REG_CACHE` is a COMPILE-time option defaulting OFF, and it cannot
+  be enabled at runtime — `network.cpp` asserts on
+  `RegCache::is_enabled()`, which is `constexpr`. Rebuild with
+  `-DLCI_USE_REG_CACHE=ON`. No external dependency: LCI vendors the UCS
+  rcache in `third_party/ucx`, gated on that same option.
+- Measured effect of turning it on (same binary, cache toggled at runtime by
+  `LCI_ATTR_USE_REG_CACHE` once it is compiled in — which makes a properly
+  controlled A/B possible): 8 KB 50.7 -> 6.2 us (8.2x), 32 KB 54.8 -> 7.9
+  (7.0x), 128 KB 65.3 -> 13.3 (4.9x), 2 MB 180.6 -> 131.5 (1.37x). Flat
+  saving, so the RATIO shrinks as bandwidth takes over. Verified by
+  interposition: 0 per-message registrations with the cache on, exactly 2000
+  for 1000 iterations with it off. At the charm++ level the same change is
+  ~7x on 16 KB messages.
+- What remains after the fix is ~3 us over the eager path — one extra
+  RTS/RTR round trip, which is what rendezvous SHOULD cost. If your
+  rendezvous overhead is tens of microseconds rather than a few, it is not
+  the protocol.
+- The eager/rendezvous threshold is NOT at `packet_size`, which is the
+  natural guess. It is
+  `max_bcopy_size = packet_size - LCI_CACHE_LINE - sizeof(tag_t) - sizeof(rcomp_t)`
+  (= 8116 on the wire for the default 8192), and Converse's own 20-byte
+  `CmiMessageHeader` comes out of that too, so the usable payload limit is
+  8096. Verified to the byte: 8096 -> 3.59 us, 8097 -> 51.02 us. Raising
+  `LCI_ATTR_PACKET_SIZE` moves the cliff but the packet pool is registered
+  at startup and scales with it (~272 MB -> ~1.1 GB pinned per process at
+  4x), so prefer the registration cache.
+- Technique worth reusing: LD_PRELOAD-interpose `ibv_reg_mr`/`ibv_dereg_mr`
+  to count and time registrations in a live run — it turns "I think it is
+  registering" into a number. Two traps: do NOT include
+  `<infiniband/verbs.h>` (it `#define`s `ibv_reg_mr` to a static-inline
+  dispatcher, renaming your symbol), and resolve the real function with
+  `dlvsym(RTLD_NEXT, "ibv_reg_mr", "IBVERBS_1.1")` — plain `dlsym` picks the
+  legacy `IBVERBS_1.0` entry, which has a different `ibv_mr` layout and
+  segfaults. Do not interpose `ibv_reg_mr_iova2`; libibverbs calls it
+  internally.
+
+### Reconverse sends inter-process traffic over the NIC even within a node (2026-07-26)
+
+- `CmiSyncSendAndFree` (`convcore.cpp:601`) branches on
+  `CmiMyNode() == destNode` only — same PROCESS gets a direct `CmiPushPE`,
+  and EVERYTHING else goes to `comm_backend::issueAm`. There is no
+  physical-node check. In reconverse a "node" is a process, so two processes
+  sharing a socket do IB loopback through the adapter (~2.2 us small
+  messages, plus the full registration cost above once past eager).
+- LCI itself has no shared-memory path at all — no occurrence of `shm`,
+  `loopback`, `same_node` or `intra_node` in its source. Do not expect the
+  transport layer to notice locality for you.
+- `CMK_USE_SHMEM` looks like the switch but is not sufficient: reconverse
+  has the CONSUMER (`scheduler.cpp:27` polls `CmiPopIpcBlock`) and the
+  implementation (`src/cmishmem.cpp`), but NO producer — nothing in
+  reconverse calls `CmiPushIpcBlock`/`CmiAllocIpcBlock`/`CmiMsgToIpcBlock`.
+  The only producer is in Charm++ (`ck.h` `_IpcSendImpl`/`_tryIpcSend`,
+  under `#if CMK_USE_SHMEM`), so converse-level programs — including the
+  reconverse pingpong benchmarks — would not exercise it even with the flag
+  on. Enabling it end to end is currently blocked by duplicate symbols
+  (charm's `conv-core/shmem/cmishmem.C` vs reconverse's `src/cmishmem.cpp`)
+  and by the option not being plumbed between the two build systems.
+- Corollary for benchmarking: "intra-node" is three different cases in
+  reconverse — same process (shared memory, sub-microsecond), different
+  process same node (NIC loopback today), and different node. Always say
+  which one a number refers to; they differ by more than an order of
+  magnitude.
+
+### Placement beats affinity flags; +setcpuaffinity alone can be a pessimization (2026-07-26)
+
+- Reconverse has NO comm thread (`CommunicationServerThread()` is an empty
+  stub) and `CmiStartThreads` creates exactly `+ppn` threads, so unlike
+  classic Converse SMP no core needs reserving. The flip side is that
+  network progress happens inside worker threads: a PE without a real core
+  makes no progress at all, and busy-polling PEs sharing a core produce
+  latencies at OS-timeslice scale (milliseconds) that look like transport
+  bugs. A size-independent delay of ~10 ms means scheduling, not data
+  movement.
+- CPU affinity is gated on hwloc via
+  `option(RECONVERSE_ENABLE_CPU_AFFINITY ... ${HWLOC_FOUND})`, so a build
+  without hwloc SILENTLY has all of `cpuaffinity.cpp` compiled out to empty
+  stubs, and `+setcpuaffinity` is not even parsed. Check
+  `grep RECONVERSE_ENABLE_CPU_AFFINITY <build>/CMakeCache.txt` before
+  concluding anything about pinning. On a RECONFIGURE, supplying hwloc is
+  not enough — `option()` only applies its default on the first configure,
+  so a stale `OFF` in the cache wins; pass the variable explicitly.
+- With affinity available, placement dominates and the automatic policy can
+  hurt. Two PEs, 512 B one-way, 128-core dual-socket node: `+pemap 0-1`
+  (same NUMA domain) 0.237 us; no affinity 0.828 us; `+setcpuaffinity`
+  alone 1.197 us; `+pemap 0,64` (cross-socket) 1.255 us. 5.3x from
+  placement, and the automatic spread policy is WORSE than no affinity for
+  small PE counts because it distributes workers across sockets. Use
+  explicit `+pemap` for latency work and `+showcpuaffinity` to confirm.
+- Retraction of a number from earlier the same day: an intra-process
+  latency of 0.836 us was reported as healthy. It was ~3.5x pessimistic —
+  the two PEs were landing far apart in a wide cpuset. The real figure is
+  ~0.24 us. A "reasonable-looking" latency is not evidence of good
+  placement.
+
+### A test suite can pass without ever communicating (2026-07-26)
+
+- LCI's LCT needs PMIx to discover job size under `mpirun`. If LCI was built
+  without PMIx support (common — it is an optional dependency that fails
+  silently), LCT logs "LCT assumes the number of processes of this job is 1"
+  and EVERY RANK RUNS AS AN ISOLATED SINGLE-PROCESS JOB. `mpirun -n 2 app
+  +ppn 1` then prints "Running in SMP mode on 1 nodes and 1 PEs" twice and
+  the test passes, having sent nothing.
+- reconverse's ctest suite defaults `RECONVERSE_TEST_LAUNCHER=mpirun`, so on
+  such a build every multi-process test is a duplicate of its own
+  `-onenode`/`-singlenode` twin. Point the launcher at the resource
+  manager's own launcher (`srun --mpi=pmi2` on Slurm) or build with PMIx
+  before believing a green suite.
+- Sanity check that costs nothing: make multi-process tests assert the
+  process/PE count they expect. Any test whose value depends on there being
+  N processes should fail loudly when there is one.
+- Related discipline: when a suite reports many failures, check the LAUNCH
+  before the code. Of 8 failures seen here, 7 were an artifact of nesting
+  `mpirun` inside an `srun` step and 1 was a real segfault — and separately,
+  the "passes" were not testing what they claimed. Both directions of error
+  were in the harness.
