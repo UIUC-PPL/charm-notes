@@ -132,6 +132,26 @@ a traced one, which carries tracing overhead. Never leave the stack traced if
 timing runs are queued or expected — rebuild back against `recharm/charm`
 afterwards, or keep a separate stack copy.
 
+Better pattern, used here (`clusterfinding/stage-traced-binary.sh`): build
+traced, copy the binary to `clusterfinding/traced-bin/FoF3`, then immediately
+rebuild the tree back to production. The tree never sits traced while a job
+queues, and traced runs just invoke the staged binary. Two things this needs:
+
+- **`LD_LIBRARY_PATH` must point at tracedcharm.** `FoF3` links
+  libreconverse/liblci/liblct/liblci-ucx dynamically, and its RPATH covers only
+  the gcc runtime — so those come from `LD_LIBRARY_PATH`, which `env.sh` sets to
+  the PRODUCTION charm. Without an override the traced binary silently runs on
+  the production runtime. Prepend
+  `$RECHARM/tracedcharm/lib:$RECHARM/tracedcharm/reconverse-linux-x86_64/lib`.
+  (Tracing itself still works either way — the trace machinery is in libck,
+  which is static — but the runtime should match the build.)
+- **`+traceroot <dir>`** sends the logs somewhere chosen. The default traceroot
+  is the EXECUTABLE PATH, not the CWD, so without it traces are written beside
+  the binary regardless of where you `cd` first.
+
+Trace volume: a 120-PE 80M run produced 120 `.log.gz` totalling ~157 MB, plus
+`.sts` and `.projrc`. Budget roughly 1.3 MB/PE for a ~4 s iteration.
+
 NOTE: an older revision of this profile referred to `$HOME/charm_reconverse`
 as "Ritvik's reconverse build used by the FoF sweeps". No such directory is
 visible from this account (`x-lkale`) — presumably it is under another
