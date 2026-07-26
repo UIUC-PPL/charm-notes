@@ -94,6 +94,74 @@ as "Ritvik's reconverse build used by the FoF sweeps". No such directory is
 visible from this account (`x-lkale`) — presumably it is under another
 member's home, which is not readable. Do not assume it exists.
 
+## Cluster-finding stack (paratreet2 / unionfind / htram)
+
+`$PROJECT/$USER/software/clusterfinding/` — sibling layout mirroring the
+laptop, set up 2026-07-26. paratreet2's `src/Makefile.common` derives
+`UNION_FIND_DIR`/`HTRAM_DIR` from `BASE_PATH/..`, so the sibling layout is
+what makes the build work with no path overrides on the paratreet2 side.
+
+| repo | branch | note |
+|---|---|---|
+| `htram` | `master` | provides `libhtram_group_unionfind.a` |
+| `unionfind` | `fof_with_aggregation` | **must be checked out explicitly** — the repo default is `master`, which is a DIFFERENT commit |
+| `paratreet2` | `phase1-grid` | main + the per-chare grid (`-G`) |
+
+`paratreet2` has an uninitialized submodule: run
+`git submodule update --init --recursive` (pulls N-BodyShop/utility), then
+`cd utility/structures && ./configure && make` for `libTipsy.a`.
+
+Build order and the overrides that are actually needed (CHARM = charm build
+root containing `bin/charmc`, CF = the clusterfinding dir):
+
+    cd htram      && make unionfind_smp CHARMC_SMP="$CHARM/bin/charmc"
+    cd unionfind/prefixLib && make CHARM_DIR=$CHARM PARENT_DIR=$CF
+    cd unionfind  && make clean && make CHARM_DIR=$CHARM PARENT_DIR=$CF PROFILE=
+    cd paratreet2/src          && make clean && CHARM_HOME=$CHARM make
+    cd paratreet2/examples/fof3 && make clean && CHARM_HOME=$CHARM make
+
+Three override traps, all from hardcoded foreign paths:
+
+- htram's `Makefile.common` sets `CHARMC` to a Cray/`ofi-...-cxi` relative path
+  and `CHARMC_SMP` to `/home/x-rrao/charm_reconverse/bin/charmc` (another
+  member's home — unreadable). The unionfind library is built by
+  **`CHARMC_SMP`**, not `CHARMC`, so that is the variable to override. Also
+  `make all` builds histo binaries you do not want; the target is
+  `unionfind_smp`.
+- unionfind's `Makefile.common` sets `PARENT_DIR = $(HOME)` and
+  `CHARM_DIR = $(PARENT_DIR)/charm_reconverse`. Override BOTH: setting only
+  `PARENT_DIR` silently redirects `CHARM_DIR` to `$CF/charm_reconverse`.
+- paratreet2's `CHARM_HOME ?= $(HOME)/charm_reconverse` — must be set.
+
+`AGGREGATION` defaults ON in both unionfind and paratreet2 `Makefile.common`
+and the two MUST match (it changes `unionFindLib.h` class layout — a mismatch
+is a silent ABI break). Leaving both at their defaults is consistent. Note
+`paratreet2/src/Makefile:12` comments the opposite (`make AGGREGATION= PROFILE=`);
+that comment contradicts `Makefile.common` and following it would require
+turning aggregation off on BOTH sides.
+
+`make clean` is mandatory in unionfind and paratreet2 — no header-dependency
+tracking, and the vertex-storage header layout changed recently, so stale
+objects link garbage.
+
+Smoke tests (`paratreet2/examples/fof3`, inputs in `paratreet2/inputs/`),
+expected component counts 1k: 390, 10k: 3549, 100k: 33933:
+
+    srun --mpi=pmi2 -n 2 --cpus-per-task=8 ./FoF3 -f ../../inputs/10k.tipsy \
+         -d oct -u dist -b 0.2 -c full +ppn 2      # -> FOF3 TEST PASSED: 3549
+
+80M production configuration (8 procs x 15 PEs = 120 cores, so it fits on ONE
+exclusive node — no multi-node queue needed):
+
+    srun --mpi=pmi2 --unbuffered -N 1 -n 8 --cpus-per-task=15 \
+         ./FoF3 -f /anvil/projects/x-asc050025/x-rrao/globus_shared/lambb.00500 \
+         -d oct -u dist -b 0.2 -G 4 +ppn 15
+
+`--cpus-per-task=15` is NOT optional: without it srun gives 8 cores for 120
+busy-polling PEs and every timing is meaningless. A full 80M run at this
+configuration takes ~8 s wall, so repeats are cheap — use them, phaseA max has
+~10% run-to-run spread (see below).
+
 ## Slurm idioms
 
 ### Getting a whole node — the thing to get right
@@ -211,8 +279,12 @@ before trusting `ctest`.
   `-DRECONVERSE_AUTOFETCH_LCI2=ON`, or it builds with no network backend and
   every rank runs as an isolated 1-PE job.
 - `CmiMemoryUsage` returns 0 under reconverse — FOF3STAT `memory_MB` lines
-  are useless there; use the `cache:` line or Slurm accounting. (Carried over
-  from the original template; NOT re-verified in the 2026-07-26 session.)
+  are useless there; use the `cache:` line or Slurm accounting. (CONFIRMED
+  2026-07-26: every 80M run printed `memory_MB: 0.0/0.0/0.0`.)
+- Timing spread at the 80M/120-PE configuration is ~10% on phaseA max
+  (5 runs of the same binary and flags gave 0.890, 0.906, 0.912, 1.001,
+  1.209). Any A/B claiming less than that needs interleaved repeats, not a
+  single pair — runs are only ~8 s, so there is no excuse.
 - Login nodes are shared: a busy-polling multi-PE run there may *hang* purely
   from core starvation. Never conclude "hang" or read a timing from a login
   node.
