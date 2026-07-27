@@ -660,6 +660,12 @@ reconverse/LCI.
   (trace-projections.C DefaultLogBufSize). A mid-run flush CANNOT be
   silent — PE 0 prints a shutdown banner ("Projections log flushed to
   disk N times ... performance data is likely invalid ... larger
-  +logsize"). The banner's ABSENCE certifies a trace flush-clean; the
-  per-PE log line count vs +logsize confirms it. Check both before
-  attributing any stall to trace I/O.
+  +logsize"). Flushes are also marked IN the log itself:
+  flushLogBuffer records a BEGIN_INTERRUPT/END_INTERRUPT pair (event
+  types 8/9) bracketing the write — `zcat file | grep -n '^8 '` finds
+  them, the 8->9 timestamp delta is the I/O stall, and the line count
+  between consecutive markers is the effective buffer size. Banner
+  absent + no type-8 lines + line counts under +logsize = trace
+  certified flush-clean. Check before attributing any stall to trace
+  I/O — and conversely, a trace WITH type-8 lines carries the
+  "performance data likely invalid" caveat around each flush.
