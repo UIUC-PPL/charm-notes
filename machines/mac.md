@@ -14,6 +14,25 @@ project status out of this file; it belongs in per-project memory.
 - `gh` is authenticated as `lvkale`, with push rights to
   charmplusplus/charm and the UIUC-PPL organization repositories.
 
+## Shells (surprising — checked 2026-07-26)
+
+- Account login shell is `/bin/zsh`, BUT Terminal.app has a preference
+  override (`defaults read com.apple.Terminal Shell` = `/bin/tcsh`), so
+  every Terminal window runs tcsh. Kale's interactive environment
+  (PATH, aliases like `proj`) comes from `~/.cshrc`, NOT `~/.zshrc` /
+  `~/.zprofile` — edits to zsh files silently do nothing in Terminal
+  windows. zsh files DO apply to ssh sessions and Claude Code shells.
+  csh/tcsh still ship with macOS.
+- `~/.tcshrc` and `~/.bash_profile` are root-owned (conda init run under
+  sudo at some point); editing them needs sudo.
+- Java: MacPorts openjdk17 (arm64) is the `/usr/libexec/java_home`
+  default, so plain `java` resolves to JDK 17 in every shell with no
+  JAVA_HOME needed (symlinks exist in /Library/Java/JavaVirtualMachines).
+  The old x86_64 Oracle Java 8 (JavaAppletPlugin) is still installed but
+  no longer wins.
+- Stale entry in `~/.cshrc` path: `~/software/charm/net-darwin-x86-smp/bin`
+  (x86 charm, long gone).
+
 ## Charm++ / Converse installations
 
 | Path | Runtime | Purpose |
