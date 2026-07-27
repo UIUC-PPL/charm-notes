@@ -681,3 +681,43 @@ reconverse/LCI.
   PROCESS to get the real footprint under SMP. The flush trigger is
   `pool.size() == pool.capacity()` (trace-projections.C), so entries
   written < +logsize is itself proof no flush occurred.
+
+## Trace provenance: what the .sts records, and what it does not (2026-07-27)
+
+Provenance lives in the **`.sts`**, not the logs and not the `.projrc`
+(which holds only `RC_GLOBAL_START_TIME`/`END_TIME`). Written by
+`traceWriteSTS()`, src/ck-perf/trace-common.C. You get: `MACHINE`,
+`PROCESSORS`, `SMPMODE <pes-per-process> <processes>`, `USERNAME`,
+`HOSTNAME`, `COMMANDLINE`, `TIMESTAMP` (ISO 8601 UTC), `CHARMVERSION`
+(= `CmiCommitID`). That is enough to answer who/when/which charm, and
+`SMPMODE` recovers the launch shape.
+
+Five gaps worth knowing before you rely on a .sts to identify a run:
+
+- **`PROJECTIONS_ID` is emitted EMPTY.** trace-projections.C: the comment
+  says "generate an automatic unique ID for each log" and the next line
+  prints `""`. The one field meant to identify a run is unimplemented.
+- **`COMMANDLINE` is a POST-STRIPPING snapshot, silently.** `Cmi_argvcopy`
+  is taken *after* the SMP args are consumed — mainline parses `+ppn` at
+  machine-common-core.C:1227 and `+p` at 1231, snapshots at 1412;
+  reconverse parses `+pe/+p/+ppn` at convcore.cpp:278-283 and snapshots at
+  296. `CmiCopyArgs` copies the pointer array, so args deleted BEFORE the
+  snapshot vanish and args deleted after survive. Observed: a 480-PE .sts
+  shows `+traceroot` but NOT `+ppn 15`. `SMPMODE` covers that particular
+  loss; anything else parsed that early would disappear with no marker.
+- **No application version.** `CHARMVERSION` is charm's own git describe.
+  Nothing records the app's commit — so a trace cannot tell you which
+  revision of YOUR code produced it. Encode it in the binary name or write
+  a sidecar; do not expect to recover it later.
+- **No allocation identity.** `HOSTNAME` is only the writing PE's node —
+  one of N, no node list, no scheduler job ID. On a machine where
+  allocation-to-allocation variation is large (see machines/anvil.md), that
+  is exactly the provenance needed before comparing two traces.
+- **No environment.** `LD_LIBRARY_PATH` in particular is not captured, so a
+  traced binary that resolved to an UNTRACED runtime produces a
+  normal-looking .sts. Verify with `ldd` at launch instead.
+
+Practical workaround until upstream changes: have the job script drop a
+`provenance.txt` into the traceroot with the app commit, scheduler job id,
+node list, and `ldd` of the binary. Filed upstream as
+charmplusplus/charm#3933.
