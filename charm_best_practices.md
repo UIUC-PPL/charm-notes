@@ -669,3 +669,15 @@ reconverse/LCI.
   certified flush-clean. Check before attributing any stall to trace
   I/O — and conversely, a trace WITH type-8 lines carries the
   "performance data likely invalid" caveat around each flush.
+- Sizing `+logsize` (2026-07-27): the units are ENTRIES, not bytes, the
+  flag is `+logsize` (single plus — a runtime arg beside `+ppn`, NOT a
+  `++` charmrun arg), and `LogPool::LogPool` **reserves the whole buffer
+  up front** via `pool.reserve(CtrLogBufSize)`. So the default costs
+  `1e6 * sizeof(LogEntry)` per PE at startup whether or not the trace
+  ever fills it. `sizeof(LogEntry)` is 88 bytes without PAPI (four
+  doubles, two ints, two shorts, an int, a type byte, then a union whose
+  largest member is a std::string) = 83.9 MB/PE, and the PAPI build adds
+  `NUMPAPIEVENTS * sizeof(LONG_LONG_PAPI)` on top. Multiply by PEs per
+  PROCESS to get the real footprint under SMP. The flush trigger is
+  `pool.size() == pool.capacity()` (trace-projections.C), so entries
+  written < +logsize is itself proof no flush occurred.

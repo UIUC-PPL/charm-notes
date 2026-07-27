@@ -147,10 +147,32 @@ queues, and traced runs just invoke the staged binary. Two things this needs:
   which is static — but the runtime should match the build.)
 - **`+traceroot <dir>`** sends the logs somewhere chosen. The default traceroot
   is the EXECUTABLE PATH, not the CWD, so without it traces are written beside
-  the binary regardless of where you `cd` first.
+  the binary regardless of where you `cd` first. The dir **must be on
+  `$PROJECT` or `$SCRATCH`** — compute-node `/tmp` is node-local, and a
+  traceroot there dies at startup with `Cannot open projections sts file for
+  writing due to No such file or directory` (2026-07-27).
+
+The RPATH point is worth restating because a script comment in the
+clusterfinding tree asserted the opposite for a day: `readelf -d` on FoF3 shows
+the RPATH holds ONLY the spack gcc lib dirs
+(`/apps/spack/anvil/apps/gcc/11.2.0-.../lib{,64}`). Verify with
+`ldd <binary> | grep reconverse` before every traced campaign — it prints the
+path actually resolved, so a wrong `LD_LIBRARY_PATH` shows up immediately
+instead of silently producing traces of the untraced runtime.
 
 Trace volume: a 120-PE 80M run produced 120 `.log.gz` totalling ~157 MB, plus
-`.sts` and `.projrc`. Budget roughly 1.3 MB/PE for a ~4 s iteration.
+`.sts` and `.projrc`. Budget roughly 1.3 MB/PE for a ~4 s iteration. At 4
+nodes / 480 PEs the same workload gave 670 MB (with htram aggregation) and
+567 MB (without) — aggregation's entry methods are a real fraction of the log.
+
+Trace-buffer sizing at this shape: the default `+logsize` is 1,000,000
+entries/PE, and `LogPool` **reserves it up front** (`pool.reserve`), at
+`sizeof(LogEntry)` = 88 bytes here (PAPI absent, so no `papiValues` array) =
+**83.9 MB/PE**. At 8 procs x 15 PEs that is 1.26 GB/process and ~10.1 GB/node
+against 257 GB — so raising `+logsize` several-fold is affordable. Measured
+need: the busiest PE wrote ~300-320k entries for an 80M iteration at 480 PEs,
+i.e. ~3x headroom on the default. (Flush detection is a general Projections
+topic — see charm_best_practices.md.)
 
 NOTE: an older revision of this profile referred to `$HOME/charm_reconverse`
 as "Ritvik's reconverse build used by the FoF sweeps". No such directory is
@@ -203,6 +225,28 @@ is a silent ABI break). Leaving both at their defaults is consistent. Note
 that comment contradicts `Makefile.common` and following it would require
 turning aggregation off on BOTH sides.
 
+Building **without htram** therefore means a FULL-STACK rebuild, not just a
+paratreet2 one — the unionfind library itself is compiled differently and
+cannot be shared between an agg and a noagg binary. The exact overrides
+(`clusterfinding/build-stack.sh` takes this as a third arg, `on`/`off`):
+
+    cd unionfind  && make CHARM_DIR=$CHARM PARENT_DIR=$CF PROFILE= AGGREGATION=
+    cd paratreet2/{src,examples/fof3} && CHARM_HOME=$CHARM make AGGREGATION=-DUNIONFIND
+
+`-DUNIONFIND` must stay defined on the paratreet2 side: it selects the htram
+datatype and is independent of whether aggregation is used, which mirrors
+unionfind's own `CHARMC = ... $(UNIONFIND) $(AGGREGATION)`. Verify the result
+with `nm -C FoF3 | grep -ci htram` — 0 for a real noagg build, ~730 with
+aggregation on. `-lhtram_group_unionfind` stays on the link line either way
+(hardcoded in `paratreet2/src/Makefile.common`) but pulls in nothing when
+`unionFindLib.h` no longer includes `htram_group.h`.
+
+Measured 2026-07-27 (80M, 4 nodes, 480 PEs): agg and noagg agree to ~0.002 s on
+**every phase-1 stage** — aggregation only touches the unionfind phase-3 path,
+so for phase-1 work either build is valid and the noagg one just gives a
+cleaner timeline. Do NOT read the `uf2` stage from a single pair: it swung
+0.158-2.329 across three identical repeats at this configuration.
+
 `make clean` is mandatory in unionfind and paratreet2 — no header-dependency
 tracking, and the vertex-storage header layout changed recently, so stale
 objects link garbage.
@@ -253,7 +297,7 @@ queue rather than waiting interactively: `wholenode` has been seen at 643/643
 allocated with 22k jobs pending, yet a 2-node 20-minute job still landed in
 ~10 minutes (short jobs backfill well).
 
-### Two traps that invalidate timings
+### Three traps that invalidate timings
 
 1. `salloc -N k` **without** `--exclusive` grants k CPUs *total*, not k nodes'
    worth. Two busy-polling PEs then timeshare one core and every latency is
@@ -262,6 +306,42 @@ allocated with 22k jobs pending, yet a 2-node 20-minute job still landed in
 2. Owning a node is not the same as giving ranks cores. `srun -n 2` binds one
    CPU per task by default regardless of `--exclusive`; pass
    `--cpus-per-task` explicitly.
+3. **Never A/B across two allocations.** Node-set-to-node-set variation here
+   is far larger than run-to-run variation within one allocation, and it is
+   not visible as noise — it is a clean, consistent offset that reads exactly
+   like a code effect. Measured 2026-07-27 (80M, 4 nodes, 480 PEs): the SAME
+   main-branch code gave phaseA 0.339-0.396 on one allocation and 0.265-0.268
+   on another (~25%), with `phase1` 0.67-0.76 vs 0.52-0.55. A phaseB change
+   benchmarked cross-job looked like -0.19 s; interleaved in one allocation the
+   real effect was -0.10 s. The tell that saved it: the "improvement" also
+   appeared in a stage the commit could not touch. **Always sanity-check an
+   A/B against a stage the change cannot affect** — if that moves too, the
+   comparison is measuring the allocation.
+
+### The protocol that follows from trap 3 — interleave inside one job
+
+Pre-stage each variant as its own binary, then alternate `srun` steps inside a
+single `sbatch` allocation. Repeats are ~5 s at 80M/480 PEs, so 3 reps x 3
+variants is one ~25-minute job.
+
+    #SBATCH -p wholenode -N 4 -t 00:25:00
+    for R in 1 2 3; do
+      for V in main pool pool2; do
+        srun --mpi=pmi2 -N 4 -n 32 --cpus-per-task=15 ./FoF3.$V ... +ppn 15 \
+             > $OUT/${V}.rep$R.log 2>&1
+      done
+    done
+
+Two properties worth keeping: every variant sees the same node set and the same
+neighbours, and because the binaries are pre-staged the job does not depend on
+what branch or build state the source tree is in when it finally runs — which
+matters, since a 4-node job can sit in the queue while you rebuild for the next
+experiment. Poll with `squeue` from a background shell rather than holding an
+interactive allocation, and point `-o` at `$PROJECT`.
+
+For single-node work the older `salloc --no-shell` + `srun --jobid=<ID>`
+pattern is still the fastest route (grants in seconds on `shared`); use it for
+smoke tests, not for anything whose timing you intend to quote.
 
 ### `mpirun` vs `srun` — not interchangeable here
 
@@ -307,6 +387,38 @@ before trusting `ctest`.
   point `-o` at a path under `$PROJECT` (compute-node `/tmp` is node-local
   and invisible from the login node — a binary built in `/tmp` will not even
   execute under `srun`).
+
+## Driving Anvil non-interactively (ssh, agent sessions)
+
+Written 2026-07-27 for sessions that reach Anvil over ssh rather than sitting
+on a login shell. All of it was hit in practice.
+
+- **Shell state does not persist between commands.** Every command must
+  `source $PROJECT/$USER/software/recharm/env.sh` for itself (modules,
+  `$RECHARM`, `LD_LIBRARY_PATH`). Putting the source line inside each `sbatch`
+  script is the reliable form — a job script starts from the user profile, not
+  from whatever the driving session had set.
+- **Long work must outlive the session.** Prefer `sbatch` with `-o` under
+  `$PROJECT`, and pre-stage binaries so a queued job does not depend on the
+  source tree's branch or build state when it finally runs. Then a dropped
+  connection costs nothing: the job is identified by its ID and its output is
+  on a shared filesystem. Poll with `squeue -j <ID>` from a background shell
+  rather than holding an interactive allocation.
+- **Leave a resume note in the project dir** (not only in session memory): the
+  task, the job IDs, what is already staged, the reference values a result must
+  match, and the command to resubmit. A fresh session then continues without
+  re-deriving — and without re-running an allocation to rebuild a baseline that
+  already exists on disk.
+- **Never run, and never time, on a login node.** They are shared AND different
+  hardware (EPYC 7543, 32 cores, 4 NUMA domains vs the compute nodes' dual 7763
+  / 128 cores / 8 domains). A busy-polling multi-PE run there can hang purely
+  from core starvation, and any topology or timing read there is wrong.
+- Login-node toolchain gaps to expect: **no `gdb`**. For struct layout
+  questions, compile a small probe with the same declarations instead
+  (`sizeof(LogEntry)` was resolved that way).
+- Anything written to `/tmp` in a job is on the COMPUTE node and invisible
+  afterwards — output paths, traceroots and staged binaries all belong on
+  `$PROJECT` or `$SCRATCH`.
 
 ## Data
 
