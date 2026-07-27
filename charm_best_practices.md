@@ -638,3 +638,28 @@ reconverse/LCI.
   `mpirun` inside an `srun` step and 1 was a real segfault — and separately,
   the "passes" were not testing what they claimed. Both directions of error
   were in the harness.
+
+## Reading Projections traces: black regions, flush hygiene (2026-07-26)
+
+- Time-profile BLACK = time attributed to neither entries nor idle:
+  scheduler-level work — message handling, and notably GROUP/ARRAY
+  CREATION (constructors run outside traced entries). A black wedge
+  that is per-PE staggered bars in the timeline view is creation
+  broadcasts landing at slightly different times. Diagnosed instance:
+  UnionFindLib init with htram aggregation cost 60-100 ms of black
+  per PE at 480 PEs (tram group creation + per-destination buffer
+  allocation, which grows with machine size) — found by decomposing
+  the window from the RAW logs, not the GUI.
+- Raw-log gap analysis (reusable): zcat the per-PE .log.gz, walk
+  BEGIN/END_PROCESSING (types 2/3, time = 4th field) and
+  BEGIN/END_IDLE (14/15, time = 2nd field) over the suspect window;
+  whatever time is in neither bucket is the black region, and the
+  timestamps of the largest gaps line up with what PE 0 was doing at
+  that instant. Entry ids map to names via the .sts ENTRY CHARE lines.
+- Trace-buffer flush: default +logsize is 1,000,000 entries/PE
+  (trace-projections.C DefaultLogBufSize). A mid-run flush CANNOT be
+  silent — PE 0 prints a shutdown banner ("Projections log flushed to
+  disk N times ... performance data is likely invalid ... larger
+  +logsize"). The banner's ABSENCE certifies a trace flush-clean; the
+  per-PE log line count vs +logsize confirms it. Check both before
+  attributing any stall to trace I/O.
