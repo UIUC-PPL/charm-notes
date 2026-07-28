@@ -727,13 +727,16 @@ charmplusplus/charm#3933.
 Measured from a flush-clean 480-PE trace (80M FoF, 4 Anvil nodes),
 raw-log event census: after the distributed union-find's message
 cascade ended, CkWaitQD took **87.8 ms** to detect quiescence on an
-idle system (classic Converse: ~ms); and a 32-element array
-reduction whose contributions were all in took **~130 ms** to
-complete, its CkReductionMsg protocol traffic dribbling across the
-window (1,910 RecvMsg events pacing out over 130 ms — consistent with
-timer-paced rather than message-driven progress; ReductionStarting
-broadcast on all PEs). Net: ~220 ms of pure completion-detection
-latency around ~15 ms of work. Consequences and uses:
+idle system (classic Converse: ~ms); a second ~129 ms gap initially
+looked like slow reduction traffic but microscopy CORRECTED it: the
+gap core contains zero events of ANY kind (all PEs formally idle,
+RecvMsg clusters sit at the boundaries), and the wake is a silent
+callback — it is ANOTHER QD, unionFindLib's internal
+CkStartQD(postComponentLabelingCb). Net: ~220 ms across two QD
+settles around ~15 ms of work, on an idle machine. Application side
+audited clean: no entries, no user events, no pack/unpack, no file
+or stdout I/O inside the gaps (trace buffers unflushed). Full
+investigation note: reconverse-qd-latency.md in this repo. Consequences and uses:
 - Any phase whose cost is dominated by barriers/QD (short reductions,
   quiesce waits) inherits large, VARIABLE overhead on reconverse at
   scale — explains uf2-phase variance (0.05-0.5 s) and suspiciously
