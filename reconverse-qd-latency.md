@@ -67,3 +67,22 @@ inflated barrier-to-barrier stage walls seen elsewhere (e.g. laptop
   message counting instead of QD for bounded cascades.
 - Budget ~100 ms per QD at this scale when interpreting phase timings;
   do not attribute QD-settle windows to the phases that contain them.
+
+## Addendum (2026-07-28): LCI IBV completion assert at 2B scale
+
+A related-family data point, distinct from the latency issue above:
+FoF at 1.98B particles, 8 Anvil nodes / 64 procs x 960 PEs (heavier
+per-process load than the successful 16-node run of the same binary),
+died mid-run with, on multiple ranks:
+
+    lci:Assert failed: wcs[i].status == IBV_WC_SUCC
+    (backend_ibv_inline.hpp:poll_comp_impl:118)
+
+Survivors hung until the job time limit (abort propagation did not
+complete — contrast the clean CmiAbort shutdown measured on macOS/tcp).
+The IDENTICAL binary and dataset succeeded twice at 16 nodes / 128
+procs, so the trigger correlates with per-endpoint load, not code.
+This is the InfiniBand sibling of the macOS ofi post_send assert
+(charmplusplus/reconverse#188 records the registration-path findings).
+Logs: $PROJECT/x-lkale/software/clusterfinding/results-2b/
+n8_2b.rep1.log (job 19550663).
