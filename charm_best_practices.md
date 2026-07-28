@@ -721,3 +721,26 @@ Practical workaround until upstream changes: have the job script drop a
 `provenance.txt` into the traceroot with the app commit, scheduler job id,
 node list, and `ldd` of the binary. Filed upstream as
 charmplusplus/charm#3933.
+
+## Reconverse at scale: QD and reduction completion latency (2026-07-28)
+
+Measured from a flush-clean 480-PE trace (80M FoF, 4 Anvil nodes),
+raw-log event census: after the distributed union-find's message
+cascade ended, CkWaitQD took **87.8 ms** to detect quiescence on an
+idle system (classic Converse: ~ms); and a 32-element array
+reduction whose contributions were all in took **~130 ms** to
+complete, its CkReductionMsg protocol traffic dribbling across the
+window (1,910 RecvMsg events pacing out over 130 ms — consistent with
+timer-paced rather than message-driven progress; ReductionStarting
+broadcast on all PEs). Net: ~220 ms of pure completion-detection
+latency around ~15 ms of work. Consequences and uses:
+- Any phase whose cost is dominated by barriers/QD (short reductions,
+  quiesce waits) inherits large, VARIABLE overhead on reconverse at
+  scale — explains uf2-phase variance (0.05-0.5 s) and suspiciously
+  inflated barrier-to-barrier stage walls.
+- Benchmark to add to any classic-vs-reconverse comparison: QD settle
+  time and empty-reduction completion time vs PE count, on an idle
+  system. Both should be near-milliseconds.
+- App-side mitigations while the runtime path is investigated:
+  replace completion reductions over few elements with direct done
+  messages; replace QD with counting where message counts are known.
