@@ -472,3 +472,11 @@ on a login shell. All of it was hit in practice.
 - Login nodes are shared: a busy-polling multi-PE run there may *hang* purely
   from core starvation. Never conclude "hang" or read a timing from a login
   node.
+- Sum-detail tracing at scale (validated at 2B, jobs 19558722/19559585,
+  after the trace-shutdown fix — see reconverse-trace-shutdown.md):
+  binary linked `-tracemode summary` from tracedcharm, run with
+  `+sumDetail +traceroot <dir>`. Default interval is 1 ms (`+binsize`
+  in seconds); at 2B/33 s that made 32,671 intervals x 412 EPs =
+  ~180 MB across 1920 PEs. For future runs prefer `+binsize 0.01`
+  (Kale, 2026-07-29): 10x fewer intervals, ~20 MB total, plenty for
+  phase structure. Load in Projections via the `.sum.sts` file.
