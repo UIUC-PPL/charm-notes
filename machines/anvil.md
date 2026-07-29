@@ -297,6 +297,15 @@ queue rather than waiting interactively: `wholenode` has been seen at 643/643
 allocated with 22k jobs pending, yet a 2-node 20-minute job still landed in
 ~10 minutes (short jobs backfill well).
 
+On core-consumable partitions (`debug`, `shared`), an `sbatch` header that
+requests only `-N 1` allocates ONE core; an inner `srun -n 8
+--cpus-per-task=15` then blocks forever with "Job ... step creation
+temporarily disabled, retrying (Requested nodes are busy)" until the job's
+wall limit kills it (job 19557989, 2026-07-28 — 20 min of retries, app never
+started). Declare `-n` and `--cpus-per-task` in the `#SBATCH` header (or
+`--exclusive`); on `wholenode`/`standard` this doesn't arise because
+allocation is whole-node.
+
 ### Three traps that invalidate timings
 
 1. `salloc -N k` **without** `--exclusive` grants k CPUs *total*, not k nodes'
