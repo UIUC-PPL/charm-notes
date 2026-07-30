@@ -142,3 +142,42 @@ backend — no Nagle there, so the same experiment should run on Anvil
 Anvil gaps have a different constant. The reconverse issue to file is
 now sharp: "single-in-flight inter-process message latency is
 ~100x sustained latency; QD/phase transitions serialize on it."
+
+## Addendum (2026-07-30, later): the 25 ms spikes — one QD round per spike,
+## anatomy from raw logs
+
+Kale spotted three tiny activity spikes 25 ms apart inside a silent gap
+(pool3-noagg traces, 480 PEs / 32 procs on Anvil IBV; window
+2.98-3.10 s). Raw-log analysis of that window:
+
+- Strictly inside the gap there are ZERO traced events (no entries, no
+  creations) across all 480 PEs. The spikes are UNTRACED work: idle
+  END/BEGIN pairs. At 3.0119, 3.0374, and 3.0632 s (spacing 25.5 and
+  25.8 ms), ~1150-1180 wakeups each: essentially every PE leaves idle
+  for ~1 us and returns. That is a converse-level message wave touching
+  all PEs — QdMsg handlers are converse handlers, invisible to tracing.
+  Three waves = the three QD rounds (counts, counts-unchanged, dirty
+  check); the phase restart lands one spacing after the third
+  (~3.089 s, 346 wakeups + the real broadcast).
+- Fine structure of a round: the DOWNWARD broadcast lands on all 480
+  PEs within ~100 us (wakeups are simultaneous, not staggered by tree
+  level — the broadcast path is fast). Then a small echo of 11-12
+  wakeups ~13 ms later (interior tree parents receiving reports), and
+  the next wave ~25.5 ms after the previous. So the UPWARD path — the
+  point-to-point child->parent report chain, crossing process
+  boundaries ~2 levels deep at 32 processes — stalls ~12.7 ms PER
+  CROSS-PROCESS HOP.
+
+So the same disease as the laptop measurement, with the transport
+swapped: sparse single point-to-point messages after idle cost ~12.7 ms
+on Anvil IBV (should be ~5 us) and ~5-10 ms on macOS ofi/tcp (should
+be ~45 us). Two utterly different transports, same magnitude — the
+common layer is LCI/reconverse's receive/progress path when idle, not
+the NIC and not the kernel TCP stack alone. Broadcast delivery is fast
+on both; it is the isolated point-to-point message that pays.
+
+Summary for the reconverse issue: QD costs (rounds) x (cross-process
+tree depth) x (sparse-message latency) = 3 x 2 x 12.7 ms ~= 76-130 ms,
+matching every observed settle. Fix the sparse-message idle-path
+latency and QD collapses to milliseconds; nothing in charm needs to
+change.
