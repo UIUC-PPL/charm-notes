@@ -86,3 +86,59 @@ This is the InfiniBand sibling of the macOS ofi post_send assert
 (charmplusplus/reconverse#188 records the registration-path findings).
 Logs: $PROJECT/x-lkale/software/clusterfinding/results-2b/
 n8_2b.rep1.log (job 19550663).
+
+## Addendum (2026-07-30): root cause narrowed — QD protocol exonerated,
+## sparse cross-process message latency indicted
+
+Kale's challenge: QD is counting + asynchronous reductions/broadcasts
+and should not take 100 ms; suspect a system call in the critical path
+or a sliver of continuous activity. Both hypotheses were tested.
+
+Code audit (charm qd.C + reconverse scheduler/conv-conds): no sleep,
+no timer, no 100 ms constant anywhere in the QD path. `_dummy_dq`
+(the +qd fake-QD timer) defaults to 0. Each QD hop is idle-gated via
+`CcdCallOnCondition(CcdPROCESSOR_STILL_IDLE)`; reconverse raises
+STILL_IDLE every idle scheduler iteration and runs condition callbacks
+synchronously, so a hop on an idle PE costs microseconds. The protocol
+needs >=3 idle-gated tree round-trips (counts, counts-unchanged,
+dirty-check) — milliseconds at any scale, if messages flow at normal
+latency. The only literal 100 ms sleep in reconverse is in the
+ConverseExit spin of non-rank-0 threads — exit path only.
+
+Trace evidence (2B sum-detail, 1 ms x per-EP x per-PE, 1920 PEs): ten+
+gaps of 83-146 ms with total EP activity under 15 ms machine-wide per
+gap — no sliver of application activity; the machine is genuinely
+silent at the entry-method level. Every gap ends with a BROADCAST wave
+(recvNoKeepBroadcast / next-phase entries) landing on all PEs; the
+13.117 s gap shows the same broadcast active on one process BEFORE the
+gap and on the remaining processes 146 ms AFTER — a broadcast stalled
+mid-propagation.
+
+Microbenchmark (Kale's design: ring pingpong, then CkStartQD callback,
+10 phases, no exit — `~/software/recharm/qdbench/`, laptop):
+
+| config                          | ring 400 hops | QD settle |
+|---|---|---|
+| reconverse 1 proc x 4 PEs       | 0.65 ms       | 0.015 ms  |
+| reconverse 2 procs (lcrun, ofi/tcp) | 1600-4500 ms | 12-205 ms (mean 61) |
+| classic converse 2 procs (netlrts)  | 34-99 ms  | 0.5-1.1 ms |
+
+Same qd.C in both runtimes. CONCLUSION: the QD protocol is fine; the
+~100 ms settles are the cost of a chain of SPARSE (single-in-flight)
+cross-process messages, each of which costs ~5-10 ms on reconverse's
+macOS ofi/tcp path — ~100x classic converse on the same kernel path,
+and ~100x reconverse's own SUSTAINED-traffic latency (~45 us one-way
+measured earlier). A latency that appears only for isolated messages
+after idle points at a timer in the transport (delayed-ACK/Nagle
+interaction in the tcp provider, or an LCI progress backoff), i.e.
+Kale's "system call in the critical path" — in LCI/libfabric, not in
+charm. QD, barrier-completion reductions, and phase-start broadcasts
+are exactly chains of sparse messages, which is why every quiet
+phase boundary pays it.
+
+Open: the Anvil gaps (90-130 ms at 480-1920 PEs) are on the IBV
+backend — no Nagle there, so the same experiment should run on Anvil
+(2 nodes, 1 min) to see whether IBV has its own idle-path stall or the
+Anvil gaps have a different constant. The reconverse issue to file is
+now sharp: "single-in-flight inter-process message latency is
+~100x sustained latency; QD/phase transitions serialize on it."
