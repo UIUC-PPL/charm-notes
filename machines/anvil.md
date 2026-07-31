@@ -402,6 +402,14 @@ before trusting `ctest`.
 Written 2026-07-27 for sessions that reach Anvil over ssh rather than sitting
 on a login shell. All of it was hit in practice.
 
+- **Laptop-side access**: `~/.ssh/config` on Kale's Mac defines
+  `Host anvil` -> `anvil.rcac.purdue.edu`, `User x-lkale`, with key auth
+  already working — so `ssh anvil '<command>'` and `scp anvil:<path> ...`
+  work from any session with no further setup. Different login hosts have
+  SEPARATE node-local `/tmp`: never stage files through `/tmp` between an
+  `scp` and a later `ssh` (they may land on different login nodes); use
+  `$PROJECT` paths for anything a second command must see.
+
 - **Shell state does not persist between commands.** Every command must
   `source $PROJECT/$USER/software/recharm/env.sh` for itself (modules,
   `$RECHARM`, `LD_LIBRARY_PATH`). Putting the source line inside each `sbatch`
