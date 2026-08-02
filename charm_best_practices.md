@@ -908,42 +908,42 @@ never retried. The delay lives between post and delivery, BELOW the
 progress API — not in reconverse, not in Charm++, and not reachable by
 instrumentation added from outside LCI. Handed to the LCI developer.
 
-**It is a TAIL, and the whenIdle hook is innocent (2026-08-02, job
-19623655).** A pure-Converse probe times, in the SAME run and same
-degraded state, a p2p ring and a broadcast where all 480 PEs reply --
-replying either directly from the handler or from a
-`CcdCallOnCondition(CcdPROCESSOR_STILL_IDLE)` callback (how charm QD
-gates its hops):
+**Narrowed to multi-peer receive behaviour; whenIdle innocent (2026-08-02,
+jobs 19623655 / 19623734 / 19623759 / 19623769).** Pure-Converse probes,
+degraded regime, one message in flight unless stated:
 
-| quantity | clean | degraded |
-|---|---|---|
-| p2p hop (mean) | 2.1 us | 200 us |
-| collective, FIRST of 480 replies | 743-834 us | **742-816 us (unchanged)** |
-| collective, LAST of 480 replies | 0.95-1.08 ms | **14.4-22.1 ms** |
-
-- **The fastest responder never changes.** Only the slowest moves; the
-  first-to-last spread goes 1.3x -> ~25x. This is not a uniform slowdown.
-- **One parameter fits everything.** Stall S = 18.7 ms (from collective
-  max) with p = 1.06% of messages affected predicts a mean p2p hop of
-  200.3 us — observed 200.3 — and P(>=1 of 480 stalls) = 99.4%, so every
-  collective pays it. All 30 degraded collectives measured 14.4-22.1 ms,
-  none fast. **~1 message in 100 is delayed ~19 ms; the rest are normal.**
-- **This reproduces the FoF 25 ms QD rounds with no Charm++ present**, and
-  explains why QD is where applications meet it: QD is a chain of
-  collective rounds, so it pays the tail EVERY round while p2p traffic
-  only sees a worse mean.
-- **whenIdle exonerated by measurement, not inspection.** Degraded means:
-  direct 18.67 ms vs idle-gated 17.40 ms (ratio 0.93 — the gated path is
-  marginally FASTER, within noise). Consistent with the code:
+- **A single peer is immune at any rate or idle interval.** PE 0 ping-pong
+  to one remote PE, gaps of 0 / 100 us / 1 ms / 20 ms: mean 7.8-10.5 us,
+  **zero** samples over 1 ms in 5,000 each (and 0 in 20,000 at gap 0).
+- **Multiple peers are not, with no burst at all.** Round-robin over N
+  remote PEs, still one message outstanding: N=1 -> 0 stalls; **N=8 ->
+  mean 19.3 us, 4 of 10,000 over 10 ms (max 13.1 ms); N=32 -> mean
+  31.8 us, 15 over 1 ms**. Each connection idles only ~62 us at N=8 —
+  far less than the 20 ms that was clean — so it is not coldness either.
+- **Simultaneity amplifies but is not required.** Broadcast with R
+  repliers: affected fraction 0.2 / 2.7 / 18.7 / 70.6 / 91.2 / 99.8% at
+  R = 1 / 8 / 32 / 96 / 240 / 480. The per-sample MINIMUM never moves
+  (0.75-1.00 ms at every R) — even 480 simultaneous replies often
+  complete at full speed, so it is stochastic, not a capacity limit.
+- **whenIdle exonerated by measurement**: direct 18.67 ms vs
+  STILL_IDLE-gated 17.40 ms (ratio 0.93). Matches the code —
   `CcdRaiseCondition` dispatches synchronously (conv-conds.cpp:283),
-  reconverse raises STILL_IDLE every idle iteration (scheduler.cpp:120,
-  171), and the periodic ladder is 1/10/100 ms + 1/5/10/60 s — no 25 ms
-  constant anywhere.
+  STILL_IDLE is raised every idle iteration (scheduler.cpp:120,171), and
+  the periodic ladder has no 25 ms rung.
 
-Reading note: the collective's FIRST-reply time (~780 us even when clean)
-is floor-limited by PE 0 issuing ~480 broadcast sends with SPANTREE=OFF,
-not by network latency. It is a control showing local send-issue is
-unaffected, not a latency measurement.
+**Four of our own hypotheses died here, each to a purpose-built test:**
+uniform per-message tail (0/20,000 single-peer); receive-side
+absorption-rate collapse (predicts 4.4 ms at R=96 vs 12.23 observed, and
+cannot yield a 13 ms sample at R=8); cold connection (20 ms idle, 0/5,000);
+simultaneous burst (8 SEQUENTIAL peers still stall). What survives is
+"receiver talking to several distinct peers". Method lesson: each model
+fitted the data that suggested it and died to the next experiment
+designed against it — do not ship a mechanism until it survives a test
+built to break it. Phenomenology held throughout; mechanism did not.
+
+This also explains why FoF meets it as a QD problem: QD is a chain of
+collective rounds over 32 peer processes, so it pays the stall nearly
+every round, while a 2-process benchmark never sees it.
 
 **Two traps this cost, both worth internalizing:**
 1. The first concurrency sweep held total HOPS constant, so wall time
