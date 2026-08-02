@@ -931,6 +931,27 @@ degraded regime, one message in flight unless stated:
   STILL_IDLE is raised every idle iteration (scheduler.cpp:120,171), and
   the periodic ladder has no 25 ms rung.
 
+**Reproduced in PURE LCI — reconverse and Charm++ both out (2026-08-02,
+job 19624352).** `lci_multipeer.cpp` links only LCI (nm: zero Cmi/converse
+symbols): 32 ranks x 15 threads, rank 0 thread 0 pings round-robin over K
+distinct remote ranks with ONE message outstanding, all other threads
+spinning on `lci::progress()`, after a 5 s no-traffic warm-up.
+10,000 round trips per point, fraction over 10 ms:
+
+| peers K | 1 device/rank | 15 devices/rank |
+|---|---|---|
+| 1 | **0.000%** | **0.000%** |
+| 2 | **0.000%** | — |
+| 8 | 0.070% (max 21.9 ms) | 0.210% (max 23.8 ms) |
+| 31 | 0.620% (max 25.6 ms) | 0.430% (max 19.7 ms) |
+
+One peer immune, eight not, in BOTH device configurations — so reconverse's
+one-shared-device-per-process default is not the cause, and per-thread
+devices are not a workaround. Stall rate grows faster than linearly in peer
+count (3.9x peers -> ~9x rate). Caveat: the 15-device MEANS inflate because
+each thread polls only its own device, so replies wait for the owning
+thread; only the >10 ms column is comparable across those columns.
+
 **Four of our own hypotheses died here, each to a purpose-built test:**
 uniform per-message tail (0/20,000 single-peer); receive-side
 absorption-rate collapse (predicts 4.4 ms at R=96 vs 12.23 observed, and
