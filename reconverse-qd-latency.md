@@ -3,6 +3,29 @@
 For whoever picks this up (Kale / charm-comparison project / reconverse
 team). Written 2026-07-28 from the paratreet2/FoF campaign.
 
+> **UPDATE 2026-08-01 — read this before pursuing the QD hypotheses below.**
+> The microbenchmark this note asks for (see "Where to look in
+> reconverse": QD settle vs PE count on an idle system) now exists:
+> `charm/tests/charm++/qd/qdbench`. Measured on exclusive Anvil
+> wholenodes at ppn 15 (jobs 19608513, 19608517), **QD settle is
+> 0.16-0.54 ms at 120, 240 AND 480 PEs** in 20 of 26 runs. It does not
+> scale badly with PE count.
+>
+> The other 6 runs fall off a cliff partway through, in which ring
+> throughput degrades 20-80x AND settle jumps to 77-101 ms *together*,
+> from the same phase onward, never recovering. Cliff rate: 0/14 at
+> 1 node, 1/6 at 2 nodes, 5/6 at 4 nodes.
+>
+> So the ~90 ms figure below is most likely the cliff state, not the cost
+> of quiescence detection. The framing "QD is slow at 480 PEs" looks
+> wrong; the question to chase is what collapses inter-node messaging
+> mid-run. The trace evidence here remains valid as observation — the
+> gaps are real and contain no events — but the attribution to QD
+> internals (confirmation rounds, timer-paced polling) should be treated
+> as unsupported. `+lci_ndevices` does not prevent it. Per-phase data:
+> charm_best_practices.md, "QD settle is fast; the slowness is a
+> throughput cliff".
+
 ## Symptom
 
 On an IDLE 480-PE system (4 Anvil wholenode, 32 procs x 15 PEs,

@@ -86,6 +86,15 @@ runtime-level work.
 - Derive per-unit overheads from excess-over-sequential divided by unit
   count (e.g., per-seed cost from fib threshold sweeps) — two thresholds
   giving the same per-unit number = the model is right.
+- **Prove the flag under test actually reached the binary.** A sweep that
+  shows "no effect at any setting" is more often a delivery bug than a
+  null result. Sharp edge that cost a full invalid sweep (2026-08-01):
+  in **zsh**, unquoted `$ARGS` does NOT word-split, so
+  `ARGS="+lci_ndevices 2"; ./app $ARGS` passes ONE argv token
+  `"+lci_ndevices 2"`, which `CmiGetArgInt` never matches — silently, with
+  no error and no warning. bash would have split it. Build flags as an
+  ARRAY (`FLAG=(+lci_ndevices 2); ./app "${FLAG[@]}"`), and confirm the
+  effect exists at the extremes before trusting the middle of a sweep.
 - **Before building an optimization, find a control configuration where it
   can save NOTHING, and read the "waste" counter there.** A counter that
   lumps necessary work in with savable work overstates the opportunity by
@@ -747,3 +756,96 @@ investigation note: reconverse-qd-latency.md in this repo. Consequences and uses
 - App-side mitigations while the runtime path is investigated:
   replace completion reductions over few elements with direct done
   messages; replace QD with counting where message counts are known.
+
+**Substantially revised 2026-08-01** — see "QD settle is fast; the
+slowness is a throughput cliff" below. The 87.8/129 ms figures are NOT
+the steady-state cost of QD at 480 PEs (that is ~0.3 ms); they are the
+signature of an intermittent multi-node collapse.
+
+## `+lci_ndevices`: one LCI device per PE, and where it matters (2026-08-01)
+
+Reconverse's LCI2 comm backend allocates `num_devices = 1` by default
+(`src/comm_backend/lci2/comm_backend_lci2.cpp:176`) and partitions worker
+PE threads across the devices it has:
+
+    // initThread(), same file, ~line 217
+    nthreads_per_device = ceil(num_threads / m_devices.size());
+    device_id           = thread_id / nthreads_per_device;
+
+So by default every worker PE in a process shares ONE device. Raise it with
+`+lci_ndevices K` on the command line. The useful setting is **K >= ppn**
+(worker PEs per process) — one device per PE. K beyond ppn is inert: the
+extra devices are allocated but no thread ever maps to them. Not free,
+though — when the preposted-receive floor engages, `npackets` becomes
+`1024 * K * 2`, so over-provisioning costs pinned memory per process.
+
+Whether this MATTERS is entirely a property of the transport, and the
+spread is enormous:
+
+- **macOS laptop, cross-process (libfabric with no shm provider, so TCP
+  loopback).** Catastrophic at the default. Mean QD settle, qdbench,
+  2 procs x 2 PEs: 240-304 ms at K=1 vs **0.62 ms** at K>=2. At ppn=3 and
+  ppn=4, K=1 did not finish at all (>150 s and >600 s for a run that takes
+  seconds when healthy). Intermediate K is partially fixed exactly as the
+  formula predicts — ppn=3 K=2 leaves two PEs sharing device 0 and costs
+  45 ms; ppn=4 K=2 costs 16 ms.
+- **Anvil, InfiniBand, production fof shape (8 procs x 15 PEs/node).**
+  No effect whatsoever. K in {default,1,2,4,8,15,16,30} on one node: every
+  value 0.139-0.233 ms with no trend, the largest value landing at K=15
+  rather than at the default. FoF3 on the 80M set (lambb.00500) was
+  likewise unmoved: phaseA 1.07-1.12 s on 1 node and 0.265-0.288 s on
+  4 nodes across default/K=8/K=15, two reps each, all 12 runs returning
+  identical 23707197 components (jobs 19608513, 19608517).
+
+Take-away: **do not carry this flag into cluster run scripts as a
+performance fix** — it is a workaround for transports that serialize
+badly on a shared device, and IB is not one of them. It remains
+mandatory-feeling on the Mac only because the Mac has no shared-memory
+path for local cross-process traffic (see the macOS hazards section).
+The general lesson underneath is the one worth keeping: a runtime default
+of "one of X shared by all PEs" is a contention point to go look for
+whenever a transport behaves badly under multi-PE processes.
+
+## QD settle is fast; the slowness is a throughput cliff (2026-08-01)
+
+`qdbench` (charm/tests/charm++/qd — 10 phases, each a ring over all PEs
+followed by `CkStartQD`, printing per-phase ring time and settle time) is
+the microbenchmark `reconverse-qd-latency.md` asked for. Run on exclusive
+Anvil wholenodes at ppn 15, 24 runs across 120/240/480 PEs:
+
+- **20 of 26 runs are clean**, and in those, QD settle is **0.16-0.54 ms
+  at every scale including 480 PEs**. Ring time scales as expected with
+  PE count (28 / 60 / 120 ms per phase at 120 / 240 / 480). Quiescence
+  detection is NOT inherently slow at scale on reconverse.
+- **6 of 26 runs fall off a cliff mid-run** (onset phase 3-8 of 10). Ring
+  time degrades 20-80x (120 ms -> 2.7-10.3 s per phase) and settle jumps
+  to 77-101 ms, and the two degrade TOGETHER, from the same phase onward.
+  Once it happens the run does not recover.
+- Cliff rate rises steeply with node count: **0 of 14 at 1 node**, 1 of 6
+  at 2 nodes, **5 of 6 at 4 nodes**. It needs real inter-node traffic.
+- `+lci_ndevices` does not prevent it (cliffed: 2 of 10 at the default,
+  4 of 10 at K=15; at 4 nodes, 2 of 3 vs 3 of 3). If anything K=15 looks
+  worse, but n=3 per cell cannot support that.
+
+Three consequences:
+
+1. The 87.8 ms QD settle in `reconverse-qd-latency.md` sits inside the
+   post-cliff range (77-101 ms); its ~129 ms instance is just above, and
+   that note already flags it as possibly two chained QDs. That
+   investigation's open questions are all QD-internal — confirmation
+   rounds, timer-paced polling — and this says to look upstream instead,
+   at whatever makes inter-node messaging collapse. QD settle there is a
+   symptom being measured, not the mechanism.
+2. **Never average a metric across a phase transition.** Mean settle over
+   10 phases gave 17.4 and 19.1 ms for two 4-node runs and 0.367 ms for a
+   third — which reads as a scaling curve and is not one. The runs are
+   bimodal; the honest summary is the cliff RATE plus the two modes
+   separately. Per-phase output is what made this visible: keep
+   per-iteration numbers in any benchmark, never only a summary stat.
+3. Scope caveat before generalizing: qdbench drives a tight ring of
+   ~100 x nPE small messages per phase, which is a harsher small-message
+   stress than FoF applies. The 12 FoF3 80M runs in the same jobs showed
+   no such instability (phaseA 0.265-0.288 s across six 4-node runs). So
+   the cliff is reached under sustained small-message pressure; a real
+   app hits it only sometimes — which is consistent with it showing up in
+   ONE traced FoF run's post-cascade QD.
