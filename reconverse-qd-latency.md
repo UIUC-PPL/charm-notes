@@ -21,22 +21,43 @@ team). Written 2026-07-28 from the paratreet2/FoF campaign.
 > wrong; the question to chase is what collapses inter-node messaging
 > mid-run.
 >
-> **2026-08-02, characterized.** The trigger is ELAPSED TIME (~0.6-1.1 s),
-> not traffic: a 5 s busy-wait before any messaging leaves the first ring
-> message already ~70x degraded, and severity grows with the wait. It is
-> the transport, not the machine — a fixed compute loop times
-> 11.142-11.173 ms in every phase while ring time goes 142 -> 12941 ms.
-> Payload (0-64 KB) and concurrency (1-64 in flight) change nothing.
-> Degraded cost is a scale-independent ~208-250 us per message. QD settle
-> degrades a full phase BEFORE bulk ring traffic does, which is why this
-> surfaces as a QD problem in applications. Not an obvious backoff:
-> reconverse's idle path spins with no sleep, and LCI has no backoff in
-> source. Full data in charm_best_practices.md, "Root characterization". The trace evidence here remains valid as observation — the
-> gaps are real and contain no events — but the attribution to QD
-> internals (confirmation rounds, timer-paced polling) should be treated
-> as unsupported. `+lci_ndevices` does not prevent it. Per-phase data:
-> charm_best_practices.md, "QD settle is fast; the slowness is a
-> throughput cliff".
+> **2026-08-02 — the Anvil/IBV experiment the 2026-07-30 addendum asked
+> for has now been run (jobs 19610112 / 19610179 / 19620654).** IBV does
+> have its own idle-path stall, and it is characterized:
+>
+> - The trigger is ELAPSED TIME, ~0.6-1.1 s, not traffic. A 5 s busy-wait
+>   before any messaging leaves the FIRST ring message already ~70x
+>   degraded (phase-0 ring 132 ms at -d 0 vs 7760-9899 ms at -d 5000),
+>   and severity grows with the length of the wait.
+> - It is the transport, not the machine: a fixed local compute loop
+>   times 11.142-11.173 ms in every phase of every run (<0.2% spread)
+>   while ring time goes 142 -> 12941 ms. CPU frequency/power decay under
+>   480 spinning PEs is excluded.
+> - Degraded cost is a scale-independent ~208 us/hop at 480 PEs and
+>   ~250 us/hop at 240 PEs, against ~2.4 us clean.
+> - Payload 0-64 KB changes nothing. QD settle degrades a full phase
+>   BEFORE bulk ring traffic does, which is why applications meet this as
+>   a QD problem.
+> - **Qualifies the "single-in-flight" framing below:** 1, 4, 16 AND 64
+>   tokens in flight all cliff at the same ~0.8 s onset, so global
+>   sparsity is not the whole story. At 480 PEs even 64 in flight leaves
+>   each PE idle most of the time, so this does not separate global
+>   sparsity from PER-PE idleness — but the -d result points at the
+>   latter.
+> - Not an obvious backoff: reconverse's idle path spins with no sleep
+>   (scheduler.cpp:111-122) and LCI has no backoff/usleep in source.
+>   LCI_USE_REG_CACHE is already ON, so uncached registration is out.
+>
+> Consistent with the 25 ms-per-QD-round anatomy below: 3 rounds x 25 ms
+> ~= the 75-100 ms settles. Note idle-path QD rounds (~25 ms) are ~100x
+> worse than even the DEGRADED ring hop (~208 us), so PE idleness depth
+> appears to matter on top of the global elapsed-time effect.
+>
+> The trace evidence in this note remains valid as observation — the gaps
+> are real and contain no events — but the attribution to QD internals
+> (confirmation rounds, timer-paced polling) is unsupported.
+> `+lci_ndevices` does not prevent any of it. Full per-phase data:
+> charm_best_practices.md, "Root characterization".
 
 ## Symptom
 
