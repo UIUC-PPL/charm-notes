@@ -19,7 +19,19 @@ team). Written 2026-07-28 from the paratreet2/FoF campaign.
 > So the ~90 ms figure below is most likely the cliff state, not the cost
 > of quiescence detection. The framing "QD is slow at 480 PEs" looks
 > wrong; the question to chase is what collapses inter-node messaging
-> mid-run. The trace evidence here remains valid as observation — the
+> mid-run.
+>
+> **2026-08-02, characterized.** The trigger is ELAPSED TIME (~0.6-1.1 s),
+> not traffic: a 5 s busy-wait before any messaging leaves the first ring
+> message already ~70x degraded, and severity grows with the wait. It is
+> the transport, not the machine — a fixed compute loop times
+> 11.142-11.173 ms in every phase while ring time goes 142 -> 12941 ms.
+> Payload (0-64 KB) and concurrency (1-64 in flight) change nothing.
+> Degraded cost is a scale-independent ~208-250 us per message. QD settle
+> degrades a full phase BEFORE bulk ring traffic does, which is why this
+> surfaces as a QD problem in applications. Not an obvious backoff:
+> reconverse's idle path spins with no sleep, and LCI has no backoff in
+> source. Full data in charm_best_practices.md, "Root characterization". The trace evidence here remains valid as observation — the
 > gaps are real and contain no events — but the attribution to QD
 > internals (confirmation rounds, timer-paced polling) should be treated
 > as unsupported. `+lci_ndevices` does not prevent it. Per-phase data:

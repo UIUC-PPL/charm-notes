@@ -841,6 +841,56 @@ Anvil wholenodes at ppn 15, 24 runs across 120/240/480 PEs:
   4 of 10 at K=15; at 4 nodes, 2 of 3 vs 3 of 3). If anything K=15 looks
   worse, but n=3 per cell cannot support that.
 
+### Root characterization (2026-08-02, jobs 19610112 / 19610179 / 19620654)
+
+Read this before the three consequences below; it supersedes the framing
+in them. "Throughput cliff" was the WRONG NAME. The ring is a serialized
+token — exactly one message in flight — so `ring_ms` is per-hop LATENCY x
+hop count (hops = laps x nPEs). Degraded cost is **~208 us/hop at 480 PEs
+and ~250 us/hop at 240 PEs against ~2.4 us clean**: scale-INDEPENDENT, so
+a fixed per-message adder, never congestion.
+
+Four facts, each from a controlled sweep on exclusive nodes:
+
+- **The trigger is elapsed TIME, ~0.6-1.1 s.** Onset is ~1 s in every
+  cliffed run regardless of payload: 984-1147 ms at 0 B, 942-1195 ms at
+  1 KB, 859-1026 ms at 8 KB. A 64x change in bytes and a 100x change in
+  message rate barely move it. Bigger payloads only change WHICH PHASE it
+  lands in, because phases get longer.
+- **It is not traffic at all.** `-d <ms>` busy-waits PE 0 before any
+  messaging while the other PEs spin in the scheduler. Phase-0 ring time:
+  132/132/134 ms at `-d 0`; **1262/3276/3315 ms at `-d 2000`;
+  9899/9060/7760 ms at `-d 5000`**. After a 5 s wait the very first ring
+  message is already ~70x degraded. Severity DEEPENS with the wait.
+- **It is the transport, not the machine.** A fixed local compute loop
+  timed every phase reads **11.142-11.173 ms across every phase of every
+  run** (<0.2% spread) while ring goes 142 -> 12941 ms in the same run.
+  CPU speed is constant, so power-budget/turbo decay under 480 spinning
+  PEs — the obvious alternative at a ~1 s timescale — is excluded.
+- **Concurrency does not protect.** 1, 4, 16 and 64 tokens in flight all
+  cliff at the same ~0.8 s onset.
+- **QD settle leads the ring by a phase.** In job 19620654 settle broke at
+  phase 6 (39.5 ms) while ring was still clean at 128 ms; ring broke at
+  phase 7. Sparse idle-path messages degrade first — which is why QD, not
+  bulk traffic, is where applications feel this.
+
+Not found by inspection: reconverse's scheduler idle path has NO sleep or
+backoff (it spins, raising `CcdPROCESSOR_STILL_IDLE`/`LONG_IDLE`,
+scheduler.cpp:111-122), and there is no backoff/usleep/nanosleep in LCI's
+sources. The behaviour looks exactly like an adaptive polling backoff but
+none is visibly implemented in those two layers — so it is below them
+(libfabric/IBV provider) or subtler. `LCI_USE_REG_CACHE` is already ON in
+this build, so uncached per-message registration is also excluded.
+
+**Two traps this cost, both worth internalizing:**
+1. The first concurrency sweep held total HOPS constant, so wall time
+   varied 40x across it (c=64 ran 31 ms, c=1 ran 88 s). Every high-`-c`
+   run finished BEFORE the ~1 s trigger and looked immune. When the
+   trigger is temporal, any sweep must hold WALL TIME constant, not work.
+   The error survived one correction attempt and had to be caught twice.
+2. Reporting a mean across the transition manufactures a fake scaling
+   curve — see consequence 2 below.
+
 Three consequences:
 
 1. The 87.8 ms QD settle in `reconverse-qd-latency.md` sits inside the
