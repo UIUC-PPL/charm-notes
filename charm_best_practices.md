@@ -795,15 +795,21 @@ spread is enormous:
   rather than at the default. FoF3 on the 80M set (lambb.00500), 12 runs
   across default/K=8/K=15 on 1 and 4 nodes, all returned identical
   23707197 components (jobs 19608513, 19608517).
-  *Caveat on the FoF evidence:* those runs were summarized by `phaseA`,
-  which is the phase-1 dual-tree walk — NOT the region containing the QD
-  stalls. On the correct metric (`t_uf2`, FoFPhase3.h:695 — initUF2 +
-  fireUF2Edges + CkWaitQD + find_components) the same 4-node runs ranged
-  0.049-0.383 s against ~15 ms of real work, i.e. they were bimodal and
-  2 reps could not resolve a K effect either way. A 12-rep interleaved
-  re-measurement on t_uf2 is job 19608652; treat the fof half of this
-  claim as unsettled until that lands. The qdbench half stands on its
-  own.
+  Re-measured on the RIGHT metric (job 19608652): `t_uf2`
+  (FoFPhase3.h:695 — initUF2 + fireUF2Edges + CkWaitQD + find_components,
+  the bracket that actually contains the QD stalls; `phaseA`, the
+  phase-1 dual-tree walk, does not and is uselessly stable here).
+  12 interleaved reps x {default, 8, 15} at 4 nodes / 480 PEs, medians
+  0.185 / 0.136 / 0.275 s. **No pairwise difference is significant**
+  (permutation test on medians, 200k resamples: p=0.52, 0.31, and 0.10
+  for 8-vs-15). No drift across rep blocks. Note the ordering is
+  non-monotonic and, if anything, puts K=15 WORST — the opposite of the
+  hypothesis — but p=0.10 is not evidence of that either.
+  *Power statement, so this is not over-read:* n=12 per cell against
+  this variance failed to resolve even a 2x median difference. What is
+  conclusively excluded is a laptop-scale effect (there it was 100-300x
+  and turned non-terminating runs into fast ones). A modest effect is
+  NOT excluded.
 
 Take-away: **do not carry this flag into cluster run scripts as a
 performance fix** — it is a workaround for transports that serialize
@@ -850,13 +856,19 @@ Three consequences:
    bimodal; the honest summary is the cliff RATE plus the two modes
    separately. Per-phase output is what made this visible: keep
    per-iteration numbers in any benchmark, never only a summary stat.
-3. **The same bimodality is visible in the real app, once you measure the
-   right phase.** In the six 4-node FoF3 runs, `t_uf2` — the bracket that
-   contains both QD calls — ranged 0.049 to 0.383 s around ~15 ms of
-   actual union-find work. One run had essentially no stall; others carried
-   ~250-330 ms of it. This is the `uf2` variance
-   `reconverse-qd-latency.md` reports as 0.05-0.5 s, and it is the same
-   two-regime behaviour qdbench shows, not app-level noise.
+3. **The stall is present in the real app in the MAJORITY of runs, and
+   this is the number that matters for FoF.** Across 36 interleaved
+   4-node/480-PE FoF3 runs on the 80M set (job 19608652), `t_uf2` — the
+   bracket containing both QD calls — has a floor of ~0.046 s (14 runs)
+   and a median of 0.19 s, ranging to 0.717 s. Real union-find work
+   there is ~15 ms. So **a typical production FoF run is carrying
+   ~150 ms, and not rarely 300-670 ms, of stall in this one region**,
+   and only ~39% of runs escape it. That is the `uf2` variance
+   `reconverse-qd-latency.md` reports as 0.05-0.5 s; it is not app-level
+   noise, and it is not fixed by `+lci_ndevices`. Unlike qdbench's
+   cliff, the distribution here is closer to a continuum than two clean
+   modes — consistent with "0, 1, or 2 stalls landed in this bracket"
+   rather than a single regime switch.
    **Measurement trap worth internalizing:** the summary metric already
    in the driver scripts was `phaseA` (the phase-1 dual-tree walk), which
    is rock-steady at 0.265-0.288 s and shows none of this. Inheriting a
