@@ -792,10 +792,18 @@ spread is enormous:
 - **Anvil, InfiniBand, production fof shape (8 procs x 15 PEs/node).**
   No effect whatsoever. K in {default,1,2,4,8,15,16,30} on one node: every
   value 0.139-0.233 ms with no trend, the largest value landing at K=15
-  rather than at the default. FoF3 on the 80M set (lambb.00500) was
-  likewise unmoved: phaseA 1.07-1.12 s on 1 node and 0.265-0.288 s on
-  4 nodes across default/K=8/K=15, two reps each, all 12 runs returning
-  identical 23707197 components (jobs 19608513, 19608517).
+  rather than at the default. FoF3 on the 80M set (lambb.00500), 12 runs
+  across default/K=8/K=15 on 1 and 4 nodes, all returned identical
+  23707197 components (jobs 19608513, 19608517).
+  *Caveat on the FoF evidence:* those runs were summarized by `phaseA`,
+  which is the phase-1 dual-tree walk — NOT the region containing the QD
+  stalls. On the correct metric (`t_uf2`, FoFPhase3.h:695 — initUF2 +
+  fireUF2Edges + CkWaitQD + find_components) the same 4-node runs ranged
+  0.049-0.383 s against ~15 ms of real work, i.e. they were bimodal and
+  2 reps could not resolve a K effect either way. A 12-rep interleaved
+  re-measurement on t_uf2 is job 19608652; treat the fof half of this
+  claim as unsettled until that lands. The qdbench half stands on its
+  own.
 
 Take-away: **do not carry this flag into cluster run scripts as a
 performance fix** — it is a workaround for transports that serialize
@@ -842,10 +850,16 @@ Three consequences:
    bimodal; the honest summary is the cliff RATE plus the two modes
    separately. Per-phase output is what made this visible: keep
    per-iteration numbers in any benchmark, never only a summary stat.
-3. Scope caveat before generalizing: qdbench drives a tight ring of
-   ~100 x nPE small messages per phase, which is a harsher small-message
-   stress than FoF applies. The 12 FoF3 80M runs in the same jobs showed
-   no such instability (phaseA 0.265-0.288 s across six 4-node runs). So
-   the cliff is reached under sustained small-message pressure; a real
-   app hits it only sometimes — which is consistent with it showing up in
-   ONE traced FoF run's post-cascade QD.
+3. **The same bimodality is visible in the real app, once you measure the
+   right phase.** In the six 4-node FoF3 runs, `t_uf2` — the bracket that
+   contains both QD calls — ranged 0.049 to 0.383 s around ~15 ms of
+   actual union-find work. One run had essentially no stall; others carried
+   ~250-330 ms of it. This is the `uf2` variance
+   `reconverse-qd-latency.md` reports as 0.05-0.5 s, and it is the same
+   two-regime behaviour qdbench shows, not app-level noise.
+   **Measurement trap worth internalizing:** the summary metric already
+   in the driver scripts was `phaseA` (the phase-1 dual-tree walk), which
+   is rock-steady at 0.265-0.288 s and shows none of this. Inheriting a
+   neighbouring script's grep pattern is not the same as choosing a
+   probe; check that the timer bracket actually spans the region under
+   investigation (here: FoFPhase3.h:693-696) before running the sweep.
