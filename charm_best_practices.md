@@ -908,6 +908,43 @@ never retried. The delay lives between post and delivery, BELOW the
 progress API — not in reconverse, not in Charm++, and not reachable by
 instrumentation added from outside LCI. Handed to the LCI developer.
 
+**It is a TAIL, and the whenIdle hook is innocent (2026-08-02, job
+19623655).** A pure-Converse probe times, in the SAME run and same
+degraded state, a p2p ring and a broadcast where all 480 PEs reply --
+replying either directly from the handler or from a
+`CcdCallOnCondition(CcdPROCESSOR_STILL_IDLE)` callback (how charm QD
+gates its hops):
+
+| quantity | clean | degraded |
+|---|---|---|
+| p2p hop (mean) | 2.1 us | 200 us |
+| collective, FIRST of 480 replies | 743-834 us | **742-816 us (unchanged)** |
+| collective, LAST of 480 replies | 0.95-1.08 ms | **14.4-22.1 ms** |
+
+- **The fastest responder never changes.** Only the slowest moves; the
+  first-to-last spread goes 1.3x -> ~25x. This is not a uniform slowdown.
+- **One parameter fits everything.** Stall S = 18.7 ms (from collective
+  max) with p = 1.06% of messages affected predicts a mean p2p hop of
+  200.3 us — observed 200.3 — and P(>=1 of 480 stalls) = 99.4%, so every
+  collective pays it. All 30 degraded collectives measured 14.4-22.1 ms,
+  none fast. **~1 message in 100 is delayed ~19 ms; the rest are normal.**
+- **This reproduces the FoF 25 ms QD rounds with no Charm++ present**, and
+  explains why QD is where applications meet it: QD is a chain of
+  collective rounds, so it pays the tail EVERY round while p2p traffic
+  only sees a worse mean.
+- **whenIdle exonerated by measurement, not inspection.** Degraded means:
+  direct 18.67 ms vs idle-gated 17.40 ms (ratio 0.93 — the gated path is
+  marginally FASTER, within noise). Consistent with the code:
+  `CcdRaiseCondition` dispatches synchronously (conv-conds.cpp:283),
+  reconverse raises STILL_IDLE every idle iteration (scheduler.cpp:120,
+  171), and the periodic ladder is 1/10/100 ms + 1/5/10/60 s — no 25 ms
+  constant anywhere.
+
+Reading note: the collective's FIRST-reply time (~780 us even when clean)
+is floor-limited by PE 0 issuing ~480 broadcast sends with SPANTREE=OFF,
+not by network latency. It is a control showing local send-issue is
+unaffected, not a latency measurement.
+
 **Two traps this cost, both worth internalizing:**
 1. The first concurrency sweep held total HOPS constant, so wall time
    varied 40x across it (c=64 ran 31 ms, c=1 ran 88 s). Every high-`-c`
