@@ -882,6 +882,32 @@ none is visibly implemented in those two layers — so it is below them
 (libfabric/IBV provider) or subtler. `LCI_USE_REG_CACHE` is already ON in
 this build, so uncached per-message registration is also excluded.
 
+**Localized to the transport, below the progress API (2026-08-02, job
+19621991).** Two follow-ups closed this out:
+
+- **Charm++ is exonerated.** A ~130-line PURE CONVERSE reproducer
+  (`reconverse/tests/ringbench`, modelled on tests/ring but ringing over
+  CmiMyPe() across processes, many laps in timed phases, no per-hop
+  printf) shows the identical cliff: 1.9-4.7 us/hop through phase 7,
+  then 39.5 and 124.9 us, onset at 948 ms; second rep 75.7/104.9 us at
+  1061 ms. With `-d 5000` phase 0 opens already at 259 us/hop and never
+  recovers. Only converse.h is used — CmiSyncSendAndFree, one registered
+  handler, CmiWallTimer. No chares, no QD, no charm scheduler.
+- **It is not the progress path.** Instrumenting
+  `CommBackendLCI2::progress()` (duration AND gap-since-last-call, per
+  PE, rdtsc, 5.77 BILLION samples over 472 PEs) during a run reaching
+  120 us/hop: 80.6% of progress calls return within 26 ns, 99.93% within
+  837 ns, and only 1202 samples (0.000021%) exceed 50 us. Gaps between
+  calls: 86% under 419 ns, only 1698 (0.000037%) over 50 us. `post_am`
+  reported **0 retries in 32,465 sends**.
+
+So while one 0-byte message is in flight for ~120 us, the receiving PE
+makes ~300 `lci::progress()` calls that each return "nothing" in ~26 ns.
+The PE is polling continuously; LCI's progress is not blocking; the send
+never retried. The delay lives between post and delivery, BELOW the
+progress API — not in reconverse, not in Charm++, and not reachable by
+instrumentation added from outside LCI. Handed to the LCI developer.
+
 **Two traps this cost, both worth internalizing:**
 1. The first concurrency sweep held total HOPS constant, so wall time
    varied 40x across it (c=64 ran 31 ms, c=1 ran 88 s). Every high-`-c`
