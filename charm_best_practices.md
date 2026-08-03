@@ -952,6 +952,36 @@ count (3.9x peers -> ~9x rate). Caveat: the 15-device MEANS inflate because
 each thread polls only its own device, so replies wait for the owning
 thread; only the >10 ms column is comparable across those columns.
 
+**Direction, recency and latch settled (2026-08-03, job 19630031).** Pure
+LCI, 10,000 samples per arm, measured round trip always to ONE partner:
+
+| arm | stalls >1 ms |
+|---|---|
+| round-robin K=1 (control) | 0 |
+| round-robin K=31 (control) | 52 (33 over 10 ms) |
+| fan-IN: 8 / 31 ranks push one-way at rank 0 | **0 / 0** |
+| fan-OUT: rank 0 pushes one-way to 8 / 31 | **0 / 0** |
+| touch 31 peers once, then 1 partner for 10,000 | **0** |
+
+- **Neither direction alone reproduces it.** Receiving from 31 sources is
+  clean; sending to 31 destinations is clean. Only a repeated TWO-WAY
+  exchange cycled over many peers stalls. "Receiver receiving from many
+  peers" — the phrasing we had been using — is wrong.
+- **Not "ever used":** touching 31 peers once leaves no residue.
+- **It does not latch.** 52 stalls spread through the run, first at index
+  13, rate AFTER the first stall 0.52% (not ~100%), and density decays
+  ~35x: 6.00% in iterations 0-100, 2.00% to 500, 0.80% to 2000, 0.17%
+  thereafter. Something warms up; the 5 s spin-only warm-up does not
+  cover it since no messages flow then.
+- **It is a distribution shift, not rare stalls.** Fraction in the 2-8 us
+  mode falls 85.2 / 83.8 / 66.5 / 19.7% at K = 1 / 2 / 8 / 31, with mass
+  moving into a ~128 us mode plus a small >8 ms tail.
+
+Still open: the round-robin couples "initiator returns to a peer it has
+not used for K iterations" with "responder must reply after idling K
+iterations". Separating them needs K responders in rotation while the
+driver always measures against the same partner.
+
 **Four of our own hypotheses died here, each to a purpose-built test:**
 uniform per-message tail (0/20,000 single-peer); receive-side
 absorption-rate collapse (predicts 4.4 ms at R=96 vs 12.23 observed, and
