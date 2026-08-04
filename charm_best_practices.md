@@ -161,6 +161,10 @@ runtime-level work.
   clean pass before trusting binaries.
 - Don't hand-edit CMAKE_CXX_FLAGS in a configured charm build tree
   (mixed-flag objects => instant segfaults); wipe and rebuild via ./build.
+- If you need to pass CMake flags to dependent libraries like Reconverse
+  and LCI, you must use the `--with-cmake-args` option in the build script;
+  otherwise the arg parser in buildcmake will swallow the argument and turn
+  it into a compiler flag.
 - Run idiom: `lcrun -n <procs> env DYLD_LIBRARY_PATH=<charm>/lib ./app
   +pe <total PEs> <args>`. `+pe` is total across processes. Single-process
   runs don't need lcrun.
