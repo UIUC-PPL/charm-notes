@@ -1082,3 +1082,22 @@ matter:
 Payoff shape (why bother): the core module carries no app chares, and any
 `extern module dep` of the app (e.g. unionFindLib) stops being a link
 requirement of every unrelated application.
+
+## A send on a null (default-constructed) group proxy stalls quiescence silently (2026-08-04)
+
+Symptom family: all schedulers idle at empty queues, yet `CkWaitQD` never
+returns — looks like a lost message, samples show pure idle polling. One
+cause: an entry send through a group/array proxy that was never assigned
+(default-constructed, gid 0). It does not crash; the send is counted by
+the QD create-counters but is never delivered, so quiescence is
+permanently one message short. Found when paratreet2's single-distribution
+mode removed the chare array that had been the only place a cross-pointer
+proxy (CacheManager -> Resumer) was initialized: installs then "notified"
+a null proxy and every multi-process walk hung. Diagnosis pattern that
+worked: bracket the pipeline with prints to isolate the stalled barrier,
+confirm schedulers idle (sample/gdb), then hunt for sends through proxies
+whose initialization lived in a code path that no longer runs. Corollary
+for framework surgery: when deleting or making optional a chare type,
+grep for every side effect of its constructors/init functions — the
+cross-wiring they performed for OTHER actors is the part that breaks
+non-locally.
