@@ -1039,3 +1039,46 @@ Three consequences:
    neighbouring script's grep pattern is not the same as choosing a
    probe; check that the timer bracket actually spans the region under
    investigation (here: FoFPhase3.h:693-696) before running the sweep.
+
+## Splitting templated chares into their own module (extern module), and two traps (2026-08-03, paratreet2 fof extraction)
+
+Extracting application chares (templated over a Data type) from a core
+module into their own module (`module app { extern module core; ... }`)
+works cleanly — the app mainmodule externs both modules and keeps its
+`extern entry` instantiation declarations unchanged — but three mechanics
+matter:
+
+1. **Ship the module's template definitions IN its own headers.** charmxi
+   puts `CBase_`/closure/proxy template DEFINITIONS in the def.h
+   `CK_TEMPLATES_ONLY` section, with only forward declarations in decl.h.
+   Any header whose inline (non-template) code touches a concrete-Data
+   chare — e.g. a visitor calling `proxy.ckLocalBranch()->member` —
+   requires those definitions at parse time. The reliable idiom: the
+   module's main header includes its own `<mod>-templates.h`
+   (`#define CK_TEMPLATES_ONLY / #include "<mod>.def.h" / #undef`)
+   immediately after `<mod>.decl.h`, exactly as paratreet2's
+   Subtree.h/CacheManager.h include templates.h. Diagnosing "implicit
+   instantiation of undefined template CBase_X<T>" by theory is slow;
+   preprocess a WORKING TU (`clang -E | grep -n 'struct CBase_X :'` plus
+   the preceding `# line "file"` marker) to see where the definition
+   actually comes from.
+2. **PUPable_decl_template breaks under a dependent base.** A templated
+   PUPable whose PUP::able ancestry runs through a dependent base
+   (`class F<T> : Base<T>` with `Base<T> : PUP::able`) fails to compile:
+   the macro's `register_PUP_ID` body calls `register_constructor`
+   unqualified, and unqualified lookup does not search dependent bases.
+   Hand-expand the macro and qualify `PUP::able::register_constructor`;
+   the `my_PUP_ID` static can live in the header as a template definition
+   (`template <typename T> PUP::able::PUP_ID F<T>::my_PUP_ID = 0;`).
+3. **Registration of a non-main module's templated chares is the app's
+   job.** Nothing auto-registers `CkIndex_X<Data>` for extern-module
+   templated chares; provide a `registerChares<Data>()` in the module
+   (CkIndex __register calls + PUPable_reg of the module's PUPables,
+   unique names per instantiation, e.g. via typeid) and have the app's
+   registration hook call it. A fully-templated module still needs one
+   TU compiling the plain (non-CK_TEMPLATES_ONLY) def.h for
+   `_register<mod>()`.
+
+Payoff shape (why bother): the core module carries no app chares, and any
+`extern module dep` of the app (e.g. unionFindLib) stops being a link
+requirement of every unrelated application.
