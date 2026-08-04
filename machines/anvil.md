@@ -488,3 +488,15 @@ on a login shell. All of it was hit in practice.
   ~180 MB across 1920 PEs. For future runs prefer `+binsize 0.01`
   (Kale, 2026-07-29): 10x fewer intervals, ~20 MB total, plenty for
   phase structure. Load in Projections via the `.sum.sts` file.
+
+## Launch EVERYTHING through srun on compute nodes — even single-process (2026-08-03)
+
+A bare `./FoF3 ... +pe 4` inside an sbatch with `--ntasks=4` hung for its
+full 20-minute limit with zero output (job 19649742): under a multi-task
+SLURM allocation, the reconverse/LCI PMI bootstrap sees the SLURM_* task
+count and waits for ranks that never join. On laptop, running the binary
+directly is the single-process idiom; on Anvil compute nodes it is not —
+use `srun --mpi=pmi2 -n 1 ./app +pe <PEs>` for single-process runs too
+(job 19650252: same binary, 6/6 pass). Corollary: a reconverse job whose
+log stops dead right before the first run banner is almost certainly this,
+not a crash.
