@@ -998,6 +998,21 @@ LCI, 10,000 samples per arm, measured round trip always to ONE partner:
   configuration, so it never bore on multi-peer behaviour. There was no
   contradiction to reconcile.
 
+**WORKAROUND, measured (2026-08-04, job 19661625): one tiny message per
+PROCESS to a ring neighbour every ~100 ms.** 30,000 samples/point at
+K=16: control 39 stalls >10 ms and 89.1 us mean; with the keep-alive at
+200 us / 1 ms / 10 ms / 50 ms / **200 ms** periods, **0 stalls at every
+one**, mean back to 24-27 us. At 200 ms that is 160 msg/s across a
+32-rank job — free. Recommend 100 ms: onset needs ~1 s of quiet, so that
+leaves 10x margin; 1 s would sit on the threshold.
+Implementation notes: must be a real INTER-process send (same-process
+sends bypass LCI entirely, convcore.cpp:601); one per process, not per
+PE; the 100 ms rung of reconverse's periodic ladder (conv-conds.cpp:46)
+is the natural hook. Do NOT use a broadcast/reduction cycle for this —
+with SPANTREE=OFF the broadcast half is a flat O(P) loop costing ~780 us
+of root time at 480 PEs, versus one message per rank for a ring.
+Full note for whoever implements it: clusterFinding/WORKAROUND-lci-idle-stall.md
+
 Still unexplained: why a single busy pair is immune while 8 peers at a
 SHORTER per-pair idle interval are not, and why the stall rate decays
 ~35x over a run at fixed configuration.
