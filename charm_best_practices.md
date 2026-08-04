@@ -981,10 +981,26 @@ LCI, 10,000 samples per arm, measured round trip always to ONE partner:
   mode falls 85.2 / 83.8 / 66.5 / 19.7% at K = 1 / 2 / 8 / 31, with mass
   moving into a ~128 us mode plus a small >8 ms tail.
 
-Still open: the round-robin couples "initiator returns to a peer it has
-not used for K iterations" with "responder must reply after idling K
-iterations". Separating them needs K responders in rotation while the
-driver always measures against the same partner.
+**Resolved (2026-08-04, jobs 19644929 / 19654221):**
+- **Ambient traffic suppresses it entirely.** 30,000 samples/cell: at
+  K=16 the control gives 75 stalls >10 ms and a 98.3 us mean; keeping the
+  PEERS busy gives 0 and 25.6 us; and keeping only UNINVOLVED ranks busy
+  while the peers idle exactly as in the control gives **0 and 23.6 us**.
+  So it is not the peers' state at all — any background traffic in the
+  job prevents it, and restores the mean as well as the tail. That is
+  also a practical workaround.
+- **It is thread-local.** 15 driver threads each with one dedicated peer:
+  0.013% over 10 ms, against 0.010% for the K=1 control and 0.490% for
+  K=31. One thread with 15 peers stalls; 15 threads with one peer each do
+  not.
+- **Correction to an earlier note here:** the 20 ms gap test that seemed
+  to contradict a coldness story ran at K=1, which is immune in every
+  configuration, so it never bore on multi-peer behaviour. There was no
+  contradiction to reconcile.
+
+Still unexplained: why a single busy pair is immune while 8 peers at a
+SHORTER per-pair idle interval are not, and why the stall rate decays
+~35x over a run at fixed configuration.
 
 **Four of our own hypotheses died here, each to a purpose-built test:**
 uniform per-message tail (0/20,000 single-peer); receive-side
