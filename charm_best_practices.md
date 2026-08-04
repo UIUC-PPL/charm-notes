@@ -1137,37 +1137,44 @@ grep for every side effect of its constructors/init functions — the
 cross-wiring they performed for OTHER actors is the part that breaks
 non-locally.
 
-## Reconverse: a [threaded] entry parks its rank's scheduler — and with it the whole CcdPERIODIC ladder (2026-08-04)
+## Reconverse: Ccd periodic ticks SLOW under load; they never stop — do not trust sparse print points (2026-08-04, corrected same day)
 
-Measured on reconverse (paratreet2 keep-alive work): a callback
-registered with CcdCallOnConditionKeep on the CcdPERIODIC_100ms rung of
-rank 0 fires at the expected ~10/s on every process EXCEPT the one whose
-rank 0 hosts a long-lived [threaded] entry (the mainchare + Driver
-init/run pattern). On that rank the ticks stop as soon as the threaded
-entry starts and CcdPROCESSOR_STILL_IDLE never fires either — the
-pthread is inside the threaded entry, its CsdScheduler loop (which is
-what calls CcdCallBacks and raises the idle conditions) is not running,
-and nothing else services that rank's thread-local condition state.
-Consequences and rules:
-1. Do not attach periodic/idle-condition machinery to rank 0 if the
-   application keeps a threaded entry alive there — use the last rank of
-   the process (no mainchare, no driver, and in this stack no node-first
-   singleton chares).
-2. Diagnosis pattern that separated the failure modes: pair the periodic
-   callback with a counter on CcdPROCESSOR_STILL_IDLE (raised straight
-   from the scheduler's idle branch, no timer arithmetic). Periodic
-   silent + still-idle silent = the scheduler loop itself is not
-   running; periodic silent + still-idle firing = the ladder's time
-   bookkeeping is broken.
-3. Instrument-output hygiene that cost an afternoon: `grep | head` and
-   `grep | tail -N` on interleaved multi-process output produced a false
-   "ticks stop after 3" reading (SIGPIPE/truncation + buffering); the
-   same run unfiltered showed continuous ticks on the healthy process.
-   Sort or capture whole logs before concluding a periodic event stream
-   died.
-Open question for the reconverse team: whether CsdScheduler should
-service CcdCallBacks from the threaded-entry suspend path (classic
-charm's CthSuspend returns to the scheduler loop between blocks, which
-reconverse also does — the parked state here outlasted individual
-blocks, suggesting the driver thread holds the pthread across its
-CkCallbackResumeThread waits differently than classic).
+CORRECTION of this note's earlier version, which claimed a [threaded]
+entry "parks" its rank's scheduler and kills the CcdPERIODIC ladder.
+That claim was WRONG, refuted two ways on the same day:
+
+1. Minimal probe (bare charm program: initproc arms a counter on
+   CcdPERIODIC_100ms on every rank; the mainchare's threaded entry loops
+   on CkWaitQD for 10 s): every rank, INCLUDING the one hosting the
+   mainchare and the threaded entry, ticks at the full ~10/s. Threaded
+   entries suspend properly; the host pthread returns to CsdScheduler,
+   whose every iteration — busy or idle — reaches CcdCallBacks().
+2. Full application (paratreet2 FoF, 16M, 2 processes x 2 ranks) with a
+   per-rank tick counter printing every 50 ticks, plus macOS `sample` of
+   the live pthreads: no rank's ladder ever stops. The busiest rank
+   (rank 0: mainchare, driver, reduction roots) stretches to ~250 ms per
+   tick (~4/s) during phases dominated by long entry-method executions,
+   then recovers to ~10/s. Stack samples show why iterations stretch:
+   the rank stays inside CsdScheduler handling messages, and each send
+   inside a long handler contends on the network library's endpoint
+   lock (libfabric xnet on macOS) against other ranks' progress polls.
+
+What produced the false "goes silent" reading, and the rules it earns:
+1. Sparse print points masquerade as silence. The original instrument
+   printed at ticks 1, 2, 3, 10, 30 and then a rate line every 100
+   ticks; on runs too short (or ranks too slowed) to reach the next
+   print point, a live ladder is indistinguishable from a dead one.
+   Instrument periodic events with prints at a FIXED tick stride from
+   the start, and always report a final count at shutdown.
+2. Block-buffered multi-process stdout compounds it: absence of lines
+   from one process proves nothing until the run ends and buffers
+   flush. (Same afternoon, `grep | head` SIGPIPE truncation caused a
+   different false reading — sort or capture whole logs first.)
+3. Ground truth for "where is that pthread" is a sampling profiler, not
+   inference from prints: on macOS, `sample <pid>` during the run. Ten
+   seconds of it identified the real mechanism (slowed, not stopped)
+   that two days of print-based instruments mis-read.
+4. Placement rule that survives the correction: a periodic sender meant
+   to hold a steady rate is best armed on the LEAST loaded rank (last
+   rank of the process in the mainchare-plus-driver pattern) — for rate
+   fidelity under load, not correctness. Any rank is correct.
