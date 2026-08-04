@@ -1011,7 +1011,7 @@ PE; the 100 ms rung of reconverse's periodic ladder (conv-conds.cpp:46)
 is the natural hook. Do NOT use a broadcast/reduction cycle for this —
 with SPANTREE=OFF the broadcast half is a flat O(P) loop costing ~780 us
 of root time at 480 PEs, versus one message per rank for a ring.
-Full note for whoever implements it: clusterFinding/WORKAROUND-lci-idle-stall.md
+Full note for whoever implements it: clusterFinding/lci-handover/WORKAROUND-lci-idle-stall.md
 
 Still unexplained: why a single busy pair is immune while 8 peers at a
 SHORTER per-pair idle interval are not, and why the stall rate decays
