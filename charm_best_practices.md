@@ -1136,3 +1136,38 @@ for framework surgery: when deleting or making optional a chare type,
 grep for every side effect of its constructors/init functions — the
 cross-wiring they performed for OTHER actors is the part that breaks
 non-locally.
+
+## Reconverse: a [threaded] entry parks its rank's scheduler — and with it the whole CcdPERIODIC ladder (2026-08-04)
+
+Measured on reconverse (paratreet2 keep-alive work): a callback
+registered with CcdCallOnConditionKeep on the CcdPERIODIC_100ms rung of
+rank 0 fires at the expected ~10/s on every process EXCEPT the one whose
+rank 0 hosts a long-lived [threaded] entry (the mainchare + Driver
+init/run pattern). On that rank the ticks stop as soon as the threaded
+entry starts and CcdPROCESSOR_STILL_IDLE never fires either — the
+pthread is inside the threaded entry, its CsdScheduler loop (which is
+what calls CcdCallBacks and raises the idle conditions) is not running,
+and nothing else services that rank's thread-local condition state.
+Consequences and rules:
+1. Do not attach periodic/idle-condition machinery to rank 0 if the
+   application keeps a threaded entry alive there — use the last rank of
+   the process (no mainchare, no driver, and in this stack no node-first
+   singleton chares).
+2. Diagnosis pattern that separated the failure modes: pair the periodic
+   callback with a counter on CcdPROCESSOR_STILL_IDLE (raised straight
+   from the scheduler's idle branch, no timer arithmetic). Periodic
+   silent + still-idle silent = the scheduler loop itself is not
+   running; periodic silent + still-idle firing = the ladder's time
+   bookkeeping is broken.
+3. Instrument-output hygiene that cost an afternoon: `grep | head` and
+   `grep | tail -N` on interleaved multi-process output produced a false
+   "ticks stop after 3" reading (SIGPIPE/truncation + buffering); the
+   same run unfiltered showed continuous ticks on the healthy process.
+   Sort or capture whole logs before concluding a periodic event stream
+   died.
+Open question for the reconverse team: whether CsdScheduler should
+service CcdCallBacks from the threaded-entry suspend path (classic
+charm's CthSuspend returns to the scheduler loop between blocks, which
+reconverse also does — the parked state here outlasted individual
+blocks, suggesting the driver thread holds the pthread across its
+CkCallbackResumeThread waits differently than classic).
