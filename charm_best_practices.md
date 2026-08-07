@@ -1178,3 +1178,32 @@ What produced the false "goes silent" reading, and the rules it earns:
    to hold a steady rate is best armed on the LEAST loaded rank (last
    rank of the process in the mainchare-plus-driver pattern) — for rate
    fidelity under load, not correctness. Any rank is correct.
+
+## Work-stealing protocols: one authority per decision, and pace every retry (2026-08-07)
+
+Two hangs while bringing up a cross-process work-stealing scheme in a
+Charm++ application, both general enough to record:
+
+1. ONE AUTHORITY PER DECISION. Both sides of the protocol carried a
+   copy of the admission rule ("grant only if enough work remains"):
+   the helper filtered candidate donors before asking, and the donor
+   applied the same test on arrival. The duplicate copy stranded work,
+   because only the donor knows whether its own threads are still
+   draining the remainder — the helper's filter excluded exactly the
+   case where help was the ONLY way the work would ever run. Symptom: a
+   phase that never completed, every processor idle in the scheduler.
+   Rule: the party that owns the state owns the decision; the other
+   side may rank, never veto.
+2. PACE EVERY RETRY. A denial that triggers an immediate retry creates
+   a two-party message storm — the requester re-asks as fast as the
+   network delivers refusals. The machine runs at full load with no
+   forward progress, and the work being waited on is starved by the
+   polling itself. Every retry path needs a timer (CcdCallFnAfter with
+   1-2 ms was sufficient here).
+
+Diagnosis note: both presented identically (all processors idle in
+CsdScheduler, phase never completing). What separated them was an
+env-gated trace of the protocol's own state transitions — remaining
+counts, grant/deny reasons, and the completion-gate values — printed
+from every participant. Stack sampling alone showed only "everyone is
+waiting", which is true of every distributed hang.
