@@ -1207,3 +1207,57 @@ env-gated trace of the protocol's own state transitions — remaining
 counts, grant/deny reasons, and the completion-gate values — printed
 from every participant. Stack sampling alone showed only "everyone is
 waiting", which is true of every distributed hang.
+
+## An entry method reachable from several senders must make its terminal step idempotent (2026-08-08)
+
+A worker entry method that drains a queue and, when the queue is empty,
+performs a one-time completion step — deposit into a reduction, increment
+a "this processor is done" counter, contribute to a barrier — is only
+safe if that completion step runs at most once per processor. The trap is
+that such a method usually acquires more senders as the design grows, and
+nothing in the code marks the moment it stops having exactly one.
+
+The case that produced this note had three senders reaching the same
+worker: the method's own hand-off back to the scheduler at the end of a
+time slice, a `CcdCallFnAfter` poll it schedules while waiting for work
+from elsewhere, and a wake sent by an unrelated processor when work
+arrived for the whole process. Two of those could find the queue empty
+and both run the completion step. The per-process "all my processors have
+finished" counter then reached its target while one processor still held
+unsubmitted results, the process moved on to its next stage, and those
+results were discarded. The symptom was a small, varying number of
+missing merges — one to eleven out of eight million components, never the
+same twice, and only when the feature that added the extra senders was
+switched on.
+
+What makes it expensive to find is that the symptom points away from the
+cause. Everything about the data path can be verified correct — the
+serialization, the reconstruction, the computation on the reconstructed
+data, the accounting for what was delivered — and all of it will pass,
+because nothing in the data path is wrong. The defect is that a correct
+result was computed and then thrown away by a stage that had already
+decided it was finished.
+
+Rules that follow:
+
+- Guard the completion step with a per-processor flag, not with the
+  emptiness of the queue. Emptiness is a property of the queue at one
+  instant; having-finished is a property of the processor.
+- Guard entry to the method with the same flag. A processor that has
+  deposited must not run the loop again, or it will observe state that
+  belongs to the next stage.
+- Reset the flag where the stage's other per-processor state is reset,
+  so a second iteration or a second run in the same job behaves like the
+  first.
+- When a counter of the form "number of processors that have finished" is
+  compared for equality against a processor count, treat every path that
+  increments it as a place to prove single execution. Equality comparison
+  hides double counting: the count passes through the target and the test
+  can also fail to fire at all, which turns a lost result into a hang.
+
+For diagnosis, a cheap check pays for itself: at the moment the stage
+declares itself complete, verify that the structures it was draining are
+actually empty and print if they are not. That distinguishes "work was
+left undone" from "work was done and the result was dropped", which are
+indistinguishable from the output alone and have completely different
+causes.
