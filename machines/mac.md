@@ -49,6 +49,33 @@ pull or switch branches in that checkout, then `make` in the build
 directory. Built `--with-production`. `lcrun` is at
 `<build>/_deps/lci-src/lcrun`, not in `bin/`.
 
+## Which runtime to build against (Kale, 2026-08-10)
+
+Use **reconverse** by default for paratreet2 laptop work; classic Converse
+only as a second opinion when something looks runtime-specific. Anvil and
+Frontier both run reconverse, and this project's runtime-specific defects
+(the CkWaitQD hang, the array-map race) appeared only there. Validating on
+classic and deploying on reconverse leaves that gap open.
+
+Reconverse-side stack on this laptop, already built and consistent:
+
+| path | what |
+|---|---|
+| `~/software/recharm/charm/reconverse-darwin-arm8` | the charm build (`CHARM_HOME`) |
+| `~/software/recharm/{htram,unionfind}` | siblings built against it |
+| `~/software/recharm/paratreet2` | the clone that links those siblings |
+
+The sibling libraries are what pin this: paratreet2's Makefile links
+`../unionfind` and `../htram` relative to its own directory, so a checkout
+under `clusterFinding/` links the CLASSIC-built siblings and cannot simply
+be pointed at the reconverse charm. Build in the `recharm/` clone instead.
+
+Easy to drift without noticing, because the run idioms differ and both
+"work": classic is `./charmrun ++local ./app +p<total> ++ppn <per-proc>`,
+reconverse is `./app +pe <total>` with no charmrun, and multi-process
+reconverse is `lcrun -n <procs> env DYLD_LIBRARY_PATH=<build>/lib ./app
++pe <total>` (lcrun lives at `<build>/_deps/lci-src/lcrun`, not `bin/`).
+
 ## Run idioms
 
 - Classic Converse SMP (`netlrts`): `./charmrun ++local ./app +p<total PEs>
