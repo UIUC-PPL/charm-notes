@@ -817,7 +817,11 @@ spread is enormous:
 
 Take-away: **do not carry this flag into cluster run scripts as a
 performance fix** — it is a workaround for transports that serialize
-badly on a shared device, and IB is not one of them. It remains
+badly on a shared device, and IB is not one of them. (Frontier practice,
+via Kale 2026-08-11: Ritvik runs +lci_ndevices at about half the worker
+threads per process, capped at 8 — min(8, ppn/2), so 8 at ppn 15 — on
+Slingshot. Not measured against a control there; the Anvil null result
+is InfiniBand-specific, so the two do not contradict.) It remains
 mandatory-feeling on the Mac only because the Mac has no shared-memory
 path for local cross-process traffic (see the macOS hazards section).
 The general lesson underneath is the one worth keeping: a runtime default
