@@ -515,3 +515,37 @@ an explicit +pemap (Ritvik's Frontier lines are the model; note the
 best-practices caution that +setcpuaffinity alone, without a map, can
 be a pessimization). 8 procs x 15 PEs on a 128-core node leaves 8
 cores free; map workers away from core 0 per socket.
+
+## VALIDATED Anvil pemap (2026-08-11, job 19800045) — use for all future runs
+
+Compute nodes: 2x EPYC 7763, 128 cores, no SMT, NPS4 = eight 16-core
+NUMA domains (0-15, 16-31, ..., 112-127). Production configuration for
+8 procs x 15 PEs:
+
+    #SBATCH --cpus-per-task=16          # FULL node cgroup — required
+    srun --cpu-bind=none --unbuffered ... \
+      +pemap 1-15,17-31,33-47,49-63,65-79,81-95,97-111,113-127
+
+Each process = one NUMA domain minus its FIRST core (left free for
+OS/interrupts — the cure for the observed 10 ms descheduling holes).
+The reconverse pemap pattern wraps by pe % count, so this 120-entry
+per-node pattern is correct at any node count (process-major PE
+numbering aligns the wrap with node boundaries).
+
+Failure modes found on the way (each cost a test job):
+- --cpus-per-task=15 allocates only 120 of 128 cores to the JOB cgroup
+  (cores 60-63 and 124-127 excluded); binds to them fail with
+  "CmiSetCPUAffinity failed to bind PE #N to PU P#C" and CmiAbort on
+  every affected rank — BEFORE any banner reaches a buffered log (use
+  --unbuffered to see abort messages at all). --cpu-bind=none does not
+  lift the job-level cgroup, only per-task binding.
+- Historical runs (cpus-per-task=15, no affinity flags) also had
+  Slurm's task cgroups packed from core 0, so half the processes
+  STRADDLED two NUMA domains.
+- Logical-index pemap (L prefix) renumbers within the cgroup's allowed
+  set — scrambles the intended layout (same-core warnings). Use OS
+  indices with the full-node cgroup.
+- +setcpuaffinity alone auto-spreads with same-core collisions at this
+  shape (matches the best-practices caution).
+Adopting the pemap changes timing baselines — keep any A/B within one
+affinity configuration.
