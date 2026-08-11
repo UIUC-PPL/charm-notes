@@ -500,3 +500,18 @@ use `srun --mpi=pmi2 -n 1 ./app +pe <PEs>` for single-process runs too
 (job 19650252: same binary, 6/6 pass). Corollary: a reconverse job whose
 log stops dead right before the first run banner is almost certainly this,
 not a crash.
+
+## CPU affinity: our runs never set it; 10 ms scheduling holes observed (2026-08-11)
+
+Every clusterfinding sbatch to date launches without +pemap or
++setcpuaffinity ("Charm++> cpu affinity NOT enabled" in the banner).
+Observed consequence in a traced 80M/4-node run: one idle PE's
+process-LOCAL stage-trigger message sat unprocessed for 9.9 ms (its
+thread descheduled by Linux mid-spin; the general rule from the July
+latency work — a size-independent ~10 ms delay means OS scheduling, not
+transport), and because the phaseB pool assembly is a process barrier,
+that one PE stalled its whole process's phaseB. Fix for future scripts:
+an explicit +pemap (Ritvik's Frontier lines are the model; note the
+best-practices caution that +setcpuaffinity alone, without a map, can
+be a pessimization). 8 procs x 15 PEs on a 128-core node leaves 8
+cores free; map workers away from core 0 per socket.
