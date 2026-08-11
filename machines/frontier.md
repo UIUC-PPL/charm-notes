@@ -71,5 +71,14 @@ facility API for external systems/agents to trigger jobs) is the
 designated future mechanism but is internal-only so far; watch for
 external availability. Running Claude Code directly on a login node
 inside tmux is plausible (outbound https appears open) and would
-restore the assisted workflow without violating the ssh policy — test
-`claude` there once; record the outcome here.
+restore the assisted workflow without violating the ssh policy.
+POLICY CHECK (2026-08-11): OLCF publishes NO explicit rule on AI
+tools/agents (policy guide searched and read in full). Governing
+general clauses: login nodes are for edit/compile/launch with no
+CPU/memory-intensive tasks (the agent process is light; the model is
+remote); licensed user-space software is permitted; the substantive
+question is code transmission to an external API — moot for this
+public Apache-2.0 project, but a facility determination is prudent
+(precedent: Clemson Palmetto explicitly requires AI assistants to run
+in compute allocations, not login nodes). ASK help@olcf.ornl.gov
+before first use; record the answer here.
