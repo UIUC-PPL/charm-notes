@@ -42,6 +42,62 @@ clones there).
   harvest (one MFA each); bulk (traces) — Globus (authenticate once in
   the browser, transfers then run unattended).
 
+## Build bootstrap (Ritvik's recipe, 2026-08-12; verify on first build)
+
+Modules (his list): `module load PrgEnv-gnu cmake hwloc python`.
+Python must be >= 3.8 (LCI's binding generator uses the walrus
+operator — the Anvil lesson); the module python qualifies.
+
+Layout: clones in ~/software (Kale's choice, mirrors the laptop);
+reconverse ONLY — no classic charm on Frontier. The reconverse clone
+lives INSIDE the charm checkout and is consumed in place:
+
+    cd ~/software
+    git clone https://github.com/charmplusplus/charm
+    cd charm && git checkout reconverse-specific-build
+    git clone https://github.com/charmplusplus/reconverse   # -> charm/reconverse, stays on main
+
+Build (the "same build command" as Anvil/laptop; -j8 for login-node
+etiquette):
+
+    ./build charm++ reconverse-linux-x86_64 \
+        --with-fetch-reconverse-dir=$PWD/reconverse --with-production -j8
+
+HWLOC TRAP (silent): reconverse's FindHWLOC only works reliably when
+HWLOC_ROOT_DIR is passed; its ENV fallback is broken. Without it the
+build SUCCEEDS but all CPU affinity is compiled out (+setcpuaffinity
+not even parsed). After the build, check
+`grep RECONVERSE_ENABLE_CPU_AFFINITY reconverse-linux-x86_64/CMakeCache.txt`
+— must be ON; if OFF, re-run the build command with
+`-DHWLOC_ROOT_DIR=$OLCF_HWLOC_ROOT` appended (OLCF modules export
+OLCF_<pkg>_ROOT).
+
+Runtime env (tcsh — Kale uses tcsh on Frontier; guard the unset case):
+
+    if ($?LD_LIBRARY_PATH) then
+      setenv LD_LIBRARY_PATH $HOME/software/charm/lib:$LD_LIBRARY_PATH
+    else
+      setenv LD_LIBRARY_PATH $HOME/software/charm/lib
+    endif
+    setenv CHARM_HOME $HOME/software/charm/reconverse-linux-x86_64
+
+App stack, in order (exact make variables from the Anvil
+build-stack.sh; `make clean` is MANDATORY in unionfind and paratreet2
+on every rebuild — no header dependency tracking):
+
+    cd ~/software/htram
+    make unionfind_smp CHARMC_SMP=$CHARM_HOME/bin/charmc
+    cd ~/software/unionfind      # BOTH vars needed; PROFILE= empty on purpose
+    make CHARM_DIR=$CHARM_HOME PARENT_DIR=$HOME/software PROFILE= AGGREGATION=
+    cd ~/software/paratreet2/src && make clean; make
+    cd ../fof && make clean; make
+    cd ../examples/fof3 && make clean; make
+
+(paratreet2 Makefiles read $CHARM_HOME from the environment and link
+../unionfind and ../htram relative to the repo — the sibling layout in
+~/software is load-bearing. AGGREGATION empty = htram OFF, the default
+since 2026-08-05.)
+
 ## Submission
 
 Slurm. Partition `batch`, `#SBATCH -A <projid>` (lowercase project
