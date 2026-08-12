@@ -549,3 +549,15 @@ Failure modes found on the way (each cost a test job):
   shape (matches the best-practices caution).
 Adopting the pemap changes timing baselines — keep any A/B within one
 affinity configuration.
+
+## Pemap A/B verdict (2026-08-12, job 19817502, 9 interleaved 80M runs)
+
+First-core-free (the validated map above) WINS on every metric: walk
+0.123-0.134 vs last-core-free 0.134-0.208 (one worker pinned to global
+core 0 — the OS/interrupt core — produced the 0.208 outlier, matching
+the a priori reasoning) vs unpinned 0.163-0.192 (worst walk AND phaseA
+AND skew). RETRACTION: an earlier cross-job comparison suggested
+pinning cost ~10% walk — that was allocation-to-allocation variation
+masquerading as a configuration effect (the arms were never
+interleaved). Recommend first-core-free to Ritvik for Anvil runs; his
+last-core-free map differs only in pinning a worker onto core 0.
