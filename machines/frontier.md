@@ -121,6 +121,23 @@ adapt the srun line verbatim from Ritvik's recorded command
 (cray_shasta, job_vni, pemap, +lci_ndevices 7 = his min(8, ppn/2)
 setting on Slingshot, CXI env vars).
 
+## Verified 2026-08-12 (first hands-on day, via the on-machine Claude)
+
+- Single-node runs need `srun --network=single_node_vni`; `job_vni`
+  only provisions a VNI for multi-node jobs — on one node the CXI
+  provider fails (`cxip_gen_auth_key failed: -38` -> fi_domain ENOSYS
+  -> an opaque LCI assert). Multi-node keeps `job_vni`.
+- Walltime sizing: `sacct -j <id>` on the job ids recorded in
+  paratreet2 design notes gives real step times (16-node 2B FoF3 step
+  = 52 s; a 9-run 2B campaign = 3m24s total). Size job walls as
+  sum(per-step srun -t caps) + ~5 min slack; never hour-scale guesses.
+- First run on a cold page cache pays the full input read (36 s for
+  the 76.8 GB 2B tipsy vs 18-19 s warm) — treat run 1 as warm-up for
+  wall times; phase timings are unaffected.
+- 2B input: /lustre/orion/csc710/scratch/rrao/cosmo25cmb.768g2_dm.001024
+  (80M: lambb.00500 same dir). scratch is PURGED — re-check before
+  relying on it.
+
 ## Detached allocations (the Anvil measurement-burst pattern)
 
 TEST on first use, then record the answer here:
