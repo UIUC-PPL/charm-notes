@@ -1265,3 +1265,37 @@ actually empty and print if they are not. That distinguishes "work was
 left undone" from "work was done and the result was dropped", which are
 indistinguishable from the output alone and have completely different
 causes.
+
+## Summary tracing: what `+sumDetail` records, and building for it (2026-08-11)
+
+Working on `.sumd` output for Projections turned up three things worth
+keeping.
+
+**Tracing modules are a Debug-only default.** `CMakeLists.txt` sets
+`TRACING=1` only when `CMAKE_BUILD_TYPE` is `Debug`, so
+`./build charm++ <arch> --with-production` produces **no**
+`libtrace-summary.a`. The symptom is indirect: `charmc -tracemode summary`
+says "No such tracemode summary", and if you link without it the program
+runs fine while `+sumDetail` is *silently ignored* — you get no trace files
+and only a "command line argument beginning with a '+' but was not parsed
+by the RTS" warning. Fix in an existing build tree:
+`cmake . -DTRACING=1 && make -j8`.
+
+**What a `.sumd` actually holds**, per PE, RLE'd EP-major/interval-minor:
+`ExeTimePerEPperInterval` (µs) and `EPCallTimePerInterval` — which despite
+the name is `getNumExecutions()`, a *count* of entry-method runs, i.e.
+messages processed. There are no message sizes (charmplusplus/charm#3937
+adds `MsgBytesPerEPperInterval`), no senders, and no record of messages
+sent, so no communication matrix can come from a summary trace.
+`updateSummaryDetail()` is also called from `endPack`/`endUnpack`, so the
+runtime's `dummy_pack_ep`/`dummy_unpack_ep` appear as counted "messages":
+on a 1920-PE paratreet2 run they were **65% of all counts but 0.04% of the
+recorded time**, which is why no time-based view had ever revealed them.
+Anything reporting counts should separate them out.
+
+**Message sizes are alignment-rounded.** `envelope::getTotalsize()` — the
+quantity both `.log` and (now) `.sumd` record — includes the envelope and
+padding to an alignment boundary. A test that infers per-message overhead
+by differencing two payload sizes only works if both payloads round the
+same way: with 1000 vs 2000 bytes the difference came out 800 short of
+`count * payload`; with 1024 vs 2048 it was exact. Use multiples of 16.

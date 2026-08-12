@@ -41,6 +41,20 @@ project status out of this file; it belongs in per-project memory.
 | `~/software/recharm/charm` (build `reconverse-darwin-arm8`) | reconverse, branch `reconverse-specific-build` | local reconverse testing; user-installed reconverse variant |
 | `~/software/seedbalancing/charm` (build `reconverse-darwin-arm8`) | reconverse | seed-balancing runtime project |
 | `~/software/charm/netlrts-darwin-arm8-smp` | classic | OLD, non-production build — never use for benchmarking |
+| `~/software/charm-sumdbytes/charm` (build `netlrts-darwin-arm8`) | classic, upstream main | fresh clone for the .sumd message-bytes work (charm#3937); built with `-DTRACING=1` |
+
+**Do not build or edit in `~/software/recharm/charm`** (checked 2026-08-11):
+it carries uncommitted work in `src/ck-perf/trace-summary.{C,h,ci}` and
+`trace-summaryBOC.h`. Clone elsewhere for charm-side changes.
+
+**Upstream `reconverse-specific-build` no longer configures on this Mac**
+(2026-08-11): `src/arch/reconverse-darwin-arm8` has no `conv-mach-smp.h`
+(netlrts has one), so `ck-core` dies on `conv-mach-opt.h` whatever the SMP
+flag, and the reconverse it now fetches wants `include/persistent.h`, which
+the local reconverse checkout does not have. The working build above
+predates that drift and will not reproduce from a fresh clone. Tracing code
+(`trace-summary.C/.h`) is byte-identical on main and that branch, so test
+tracing changes with a classic netlrts build.
 
 recharm details: the reconverse checkout lives at
 `~/software/recharm/charm/reconverse` and is consumed in place
