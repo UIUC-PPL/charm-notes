@@ -42,7 +42,19 @@ clones there).
   harvest (one MFA each); bulk (traces) — Globus (authenticate once in
   the browser, transfers then run unattended).
 
+## Project id
+
+csc710. Job submission `#SBATCH -A csc710`; Lustre space under
+/lustre/orion/csc710/ (inputs + run outputs; purged ~90 days).
+
 ## Build bootstrap (Ritvik's recipe, 2026-08-12; verify on first build)
+
+BEFORE ANY STEP in this file: check whether the folder, clone, or
+build product already exists (Kale may have done steps by hand). An
+existing clone means verify its remote and branch (`git remote get-url
+origin`, `git branch --show-current`) and pull — never re-clone over
+it; an existing build directory means check it is current before
+rebuilding.
 
 Modules (his list): `module load PrgEnv-gnu cmake hwloc python`.
 Python must be >= 3.8 (LCI's binding generator uses the walrus
