@@ -134,9 +134,16 @@ setting on Slingshot, CXI env vars).
 - First run on a cold page cache pays the full input read (36 s for
   the 76.8 GB 2B tipsy vs 18-19 s warm) — treat run 1 as warm-up for
   wall times; phase timings are unaffected.
-- 2B input: /lustre/orion/csc710/scratch/rrao/cosmo25cmb.768g2_dm.001024
-  (80M: lambb.00500 same dir). scratch is PURGED — re-check before
-  relying on it.
+- Inputs (moved 2026-08-13): use
+  /lustre/orion/csc710/proj-shared/cosmo25cmb.768g2_dm.001024 (2B) and
+  lambb.00500 (80M) in the same dir. The old copies under
+  /lustre/orion/csc710/scratch/rrao/ became unreadable 2026-08-13
+  (scratch permissions reset to drwx--S---, killed an overnight
+  campaign) and rrao scratch remains closed; Ritvik copied both to
+  proj-shared. An 80M fallback also exists at
+  /ccs/proj/csc710/rrao/lambb.00500. proj-shared avoids per-user
+  scratch permission resets, but Lustre scratch purge policy still
+  applies — re-check before relying on it.
 
 ## Detached allocations (the Anvil measurement-burst pattern)
 
