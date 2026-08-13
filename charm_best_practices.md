@@ -1330,3 +1330,9 @@ Practice, for any new message-driven protocol:
   timeline without that question invites staring at the bulk phases
   and missing the protocol's own entries — which are small, rare, and
   exactly where the structure hides.
+
+Mechanism for the subset: `+traceprocessors 0,10,20-30` (runtime flag,
+src/ck-perf/trace-common.C) restricts which PEs record — so one traced
+binary can trace just the straggler's block plus one helper block at
+full scale. Whether it also avoids the traced-run RSS penalty (the 2B
+OOM above) is untested — check buffer allocation before relying on it.
