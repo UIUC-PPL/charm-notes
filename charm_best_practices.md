@@ -1299,3 +1299,34 @@ padding to an alignment boundary. A test that infers per-message overhead
 by differencing two payload sizes only works if both payloads round the
 same way: with 1000 vs 2000 bytes the difference came out 800 short of
 `count * payload`; with 1024 vs 2048 it was exact. Use multiples of 16.
+
+## Trace the protocol's lifetime chain EARLY, small, or on a node subset (2026-08-13, Kale)
+
+Lesson from the S3 stealing campaign: two structural defects — a
+serial per-node-malloc rebuild inside one entry method (59-423 ms
+while 13 PEs waited to help), and grant-composition problems — sat in
+plain sight for days of 16-node 2B jobs, then were obvious within
+minutes of looking at ONE Projections overview of a sum-detail trace.
+Both would have been visible from a single complete lifetime chain of
+one stolen taskset: order -> donor collect/serialize -> ship ->
+receiver rebuild -> parallel drain -> return.
+
+Practice, for any new message-driven protocol:
+- LOOK AT THE TIMELINE BEFORE SCALING THE CAMPAIGN. Run Projections on
+  a small-scale run (laptop or 2-4 nodes) as soon as the protocol
+  first works. Correctness gates prove exactness; only a timeline
+  shows serialization, entry-method granularity, and who waits on
+  whom. "It gates green" and "its entry methods are well-shaped" are
+  different facts.
+- If the behavior only manifests at scale, trace a SUBSET OF NODES at
+  full scale rather than not tracing at all: the interesting unit is
+  one complete protocol chain, and any node pair that exchanges one
+  grant contains it. (With summary tracing the cost of tracing
+  everything is mostly memory/RSS — the 2B traced binary OOMed where
+  untraced fit — so subsetting is also what makes full-scale tracing
+  affordable.)
+- Name the target explicitly before tracing: "observe one complete
+  chain of the lifetime of a <unit of the protocol>". Reading a
+  timeline without that question invites staring at the bulk phases
+  and missing the protocol's own entries — which are small, rare, and
+  exactly where the structure hides.
