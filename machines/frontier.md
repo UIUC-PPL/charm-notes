@@ -156,7 +156,16 @@ TEST on first use, then record the answer here:
    keeps the allocation usable across ssh disconnects, which is the
    property the detached pattern buys on Anvil.
 
-## Automation status (2026-08-11)
+## Automation status (2026-08-11; cross-session note 2026-08-13)
+
+Cross-session messaging (ListAgents/SendMessage between the laptop and
+Frontier Claude Code sessions, replacing the copy-paste relay): checked
+from BOTH ends on 2026-08-13 — "No reachable agents" each way. It
+requires Remote Control to be connected under the same account, plus
+the same OLCF-policy question below (ask help@olcf.ornl.gov). Until
+then the git-spec / scp-report relay stands.
+
+
 
 No sanctioned unattended-ssh path. OLCF's S3M (token-authenticated
 facility API for external systems/agents to trigger jobs) is the
