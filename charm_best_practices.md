@@ -1336,3 +1336,58 @@ src/ck-perf/trace-common.C) restricts which PEs record — so one traced
 binary can trace just the straggler's block plus one helper block at
 full scale. Whether it also avoids the traced-run RSS penalty (the 2B
 OOM above) is untested — check buffer allocation before relying on it.
+
+## Marshalled-parameter serialization: a virtual dtor anywhere in the payload silently costs 10x+ (2026-08-14, S3 campaign)
+
+Charm pups a marshalled parameter's containers per-element unless the
+element is trivially copyable. ONE `virtual ~T()` anywhere in the
+embedded object graph — even in a base class two levels down (here:
+OrientedBox : Shape with a virtual dtor, inside the app's Data, inside
+a wire struct) — silently forces field-by-field dispatch: ~15 pup
+calls per element, measured ~242 ns/element vs ~8 ns bulk, 87 ms of a
+40 MB message's 117 ms send path. The fix is a POD mirror struct on
+the wire carrying exactly the fields pup shipped, plus
+`static_assert(std::is_trivially_copyable<Wire>::value, ...)` so the
+build fails if anyone re-imports a vtable. Two lessons:
+- The wire never needs polymorphism if every real object is the same
+  concrete subclass — mirror the pupped fields, don't embed the type.
+- The static_assert is not decoration: the first attempt at this fix
+  embedded the Data type by value and shipped raw vptr bytes without
+  any error — exact results (receivers copied fields out, never
+  calling through the dead vptr), UB underneath. The assert caught it
+  at the next build.
+Diagnosis signal: PUP::sizer time. A sizer walk that costs milliseconds
+is per-element dispatch; a bulk-pupped array sizes in one addition
+(measured 17.1 ms -> 0.0 ms on the same shipment).
+
+## Aggregate counters give correct totals with wrong attributions; validations can be vacuous at the wrong scale (2026-08-13/14, S3 campaign)
+
+Two recurring failure modes from one campaign day, worth naming:
+- CORRECT TOTALS, WRONG ATTRIBUTION: timer brackets around a send call
+  measured 80 ms and was reported as "donor blocked in send" — the 80
+  ms was charm's sizer+pack; the send itself was ~1 ms (event records
+  showed the send CREATION at 99.2% through the enclosing block, so
+  the question was answerable from traces all along). Same pattern
+  earlier with correlations across heterogeneous arms (grant size,
+  work-moved) whose mechanisms co-vary. Prefer per-event accounting
+  from timelines over fitted trends across arms; when using a timer
+  bracket, say what ELSE is inside the bracket.
+- VACUOUS VALIDATION: "all gates passed" is meaningless if the code
+  under test never executed at gate scale. A 10k gate cannot exercise
+  stealing transport (pools drain before helpers match); a
+  single-node RDMA probe cannot exercise memory registration (the
+  intra-node path never registers). State, for every gate: what code
+  path did this scale actually run?
+
+## Assorted cluster-measurement traps (2026-08-13/14)
+
+- A `local a=$1 b=$2` line in bash expands ALL arguments before any
+  assignment takes effect ($b cannot reference $a); with `set -u` this
+  aborts the job. `bash -n` does not catch it. Smoke-test sbatch logic
+  against a stubbed srun before submitting.
+- Builds are not byte-reproducible: same commit, same flags, different
+  md5. md5 inequality proves nothing; compare symbol sets.
+- Fabric bandwidth is not monotone in message size: both classic and
+  shmem reconverse builds show a 4.1x cliff between 16 and 32 MB on
+  Anvil-class IB (peak ~17 GB/s at 16 MB -> ~4.2 flat above).
+  Messages above the cliff may be worth splitting; measure per fabric.
