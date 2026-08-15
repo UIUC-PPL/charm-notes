@@ -561,3 +561,32 @@ pinning cost ~10% walk — that was allocation-to-allocation variation
 masquerading as a configuration effect (the arms were never
 interleaved). Recommend first-core-free to Ritvik for Anvil runs; his
 last-core-free map differs only in pinning a worker onto core 0.
+
+## Time-of-day fabric degradation — run measurement jobs in the MORNING (2026-08-14, three-for-three)
+
+Anvil's IB fabric enters a degraded mode outside the morning window,
+severe enough to invalidate or kill measurement jobs. Signature: one
+task is OOM-killed, then its PEERS abort with
+`backend_ibv_inline.hpp:poll_comp_impl:118 lci:Assert failed:
+wcs[i].status == IBV_WC_SUCCESS` (the assert fires on the victim's
+peers when its queue pairs flush). Mechanism, per the paratreet2
+windowed-flush fix (aba7833): when the network drains slowly the sender
+outruns the wire, untransmitted copies accumulate, and a rank OOMs.
+
+Evidence, all paratreet2 2B/16-node jobs:
+| job | when (Anvil local) | outcome |
+|---|---|---|
+| 19842202 | evening | sum-detail arm OOM-killed, IBV cascade |
+| 19860455 | ~10:35 | ALL arms clean; phaseA 1.03 s |
+| 19861888 | afternoon | prewire-2 + both traced arms OOM'd |
+| 19932506 | evening | ran, but phaseA inflated |
+| 19935188 | 23:30 | ALL SIX arms OOM-killed, nothing usable |
+
+Timing is also visible without a crash: the SAME configuration measured
+phaseA 27-39 s in an evening window and 1.03 s at ~10:35 — a ~30x swing
+with identical code and inputs. So an evening job that "works" can still
+be worthless for timing.
+
+PRACTICE: submit measurement jobs with `--begin=<date>T09:30:00` (Anvil
+local) rather than letting them run when the queue happens to drain.
+Counts/exactness from an evening run are still valid; timings are not.
