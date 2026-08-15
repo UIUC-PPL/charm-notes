@@ -1391,3 +1391,53 @@ Two recurring failure modes from one campaign day, worth naming:
   shmem reconverse builds show a 4.1x cliff between 16 and 32 MB on
   Anvil-class IB (peak ~17 GB/s at 16 MB -> ~4.2 flat above).
   Messages above the cliff may be worth splitting; measure per fabric.
+
+## -march changes floating-point RESULTS via FMA contraction; pair it with -ffp-contract=off (2026-08-15)
+
+Measured at 2B particles on Frontier: adding `-march=znver3` to an
+otherwise unchanged build changed a FoF component count from 424897832
+to 424897833 — one component over — REPRODUCIBLY, 6 arms of 6 across
+two jobs. Not a code bug and not a race.
+
+Mechanism: gcc defaults to `-ffp-contract=fast`, which lets it fuse
+a*b+c into an FMA. Baseline SSE2 has NO FMA instruction, so a
+no-`-march` binary physically cannot contract; `-march=znver3` makes FMA
+available and gcc starts using it. FMA keeps more intermediate precision,
+which CHANGES the rounding of a distance test — and a pair sitting
+exactly on the linking length then falls the other side of the
+comparison. Both answers are defensible IEEE results; the predicate is
+simply knife-edge-sensitive at that scale.
+
+Practice:
+- Any `-march=`/`-mfma`/`-mavx2` experiment on code with an
+  exactness gate must carry **`-ffp-contract=off`**. On this code that
+  restored 6/6 exactness while keeping 5479 of 5540 vector references —
+  only the 69 FMAs are lost, so the SIMD experiment survives intact.
+- `-Ofast`/`-ffast-math` is a different and much bigger hammer
+  (reassociation, no-errno, finite-math): it gave 3-4x the speedup here
+  but 0/6 exactness. If tempted, split it — `-fno-math-errno` alone is
+  semantically safe and may carry most of the win.
+- Generally: when a bit-exactness gate fails after a BUILD-ONLY change,
+  suspect fp-contraction before suspecting the code.
+
+## charmc mis-parses `-march=X -Ofast` in that token order (2026-08-15)
+
+    charmc ... -march=znver3 -Ofast -c x.C -o x.o
+      -> cc1plus: error: bad value 'znver3 -Ofast' for '-march=' switch
+
+The two tokens reach cc1plus joined into the `-march=` value. Reversing
+them (`-Ofast -march=znver3`) works. The error message names `-march=`,
+which sends you hunting for an unsupported architecture — the
+architecture is fine, the argument packing is not.
+
+## A nodegroup branch entry method can run on ANY PE of the process (2026-08-15)
+
+`if (CkMyPe() == 0) CkPrintf(...)` inside a nodegroup entry method
+prints on NOBODY unless that branch happens to be delivered on PE 0 — a
+diagnostic added this way was silent across an entire 128-process run
+and was read as "the feature did not take" when it had. A nodegroup has
+exactly ONE branch per process, so the correct guard for a once-per-job
+print is `CkMyNode() == 0` alone. Note `CkMyNode()==0 && CkMyRank()==0`
+is ALSO wrong for the same reason (verified: it printed at ppn 2 and was
+silent at ppn 4). For code that may be built either way, test
+`this->isNodeGroup()`.
