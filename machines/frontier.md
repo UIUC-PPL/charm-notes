@@ -183,3 +183,55 @@ public Apache-2.0 project, but a facility determination is prudent
 (precedent: Clemson Palmetto explicitly requires AI assistants to run
 in compute allocations, not login nodes). ASK help@olcf.ornl.gov
 before first use; record the answer here.
+
+## tmux on the login node: getting text back out (2026-08-15)
+
+Recurring friction, recorded because it has cost real time ("tmux is a
+dumb terminal, cannot paste" — prompt-log 2026-08-14, worked around by
+writing temp files). Why it feels dumb: tmux owns the screen, so the
+terminal's OWN scrollback stops working (anything scrolled away is in
+tmux's buffer, not Terminal.app's), and tmux hard-wraps long lines, so a
+drag-select of wrapped output comes back with newlines injected.
+
+### The path that always works, for anything longer than a couple of lines
+
+    tmux capture-pane -pS - > ~/dump.txt     # -S - = the WHOLE scrollback
+    tmux capture-pane -pS -2000 > ~/dump.txt # or just the last 2000 lines
+
+then scp it. `-p` prints to stdout, `-J` joins wrapped lines (add it when
+you want unwrapped text). This is the same move the Frontier session
+already makes when it writes a temp file to paste from — bind it:
+
+    bind-key P run-shell 'tmux capture-pane -pJS - > $HOME/pane-$(date +%H%M%S).txt'
+
+### On-screen selection
+
+tmux's default is `mouse off`, and with it off Terminal.app's native
+drag-select + Cmd-C works normally. If mouse mode has been turned ON
+(for tmux scrolling/pane clicks) it steals the drag, and then:
+- Terminal.app: hold **Fn** while dragging to force a local selection
+- iTerm2: hold **Option**
+Keep a toggle rather than choosing once:
+
+    bind-key m if -F '#{mouse}' 'set -g mouse off' 'set -g mouse on'
+
+### Copying straight to the Mac clipboard over ssh (OSC 52)
+
+Works in iTerm2 (enable "Applications in terminal may access clipboard"),
+NOT in Terminal.app. With it, a tmux copy-mode selection lands in the
+local clipboard with no file round-trip:
+
+    set -g set-clipboard on
+    set -g allow-passthrough on   # tmux 3.3+; drop the line on older tmux
+
+### Colors/keys
+
+    set -g default-terminal "screen-256color"   # tmux-256color if the
+                                                # terminfo entry exists
+    set -ga terminal-overrides ",*256col*:Tc"   # truecolor
+    set -g history-limit 200000                 # so capture-pane -S - is useful
+
+Check the terminfo entry exists before using tmux-256color:
+`infocmp tmux-256color >/dev/null 2>&1 && echo ok` — on a bare login node
+it often does not, and a missing entry is itself a cause of "dumb
+terminal" behaviour in TUIs.
