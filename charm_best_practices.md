@@ -1420,15 +1420,25 @@ Practice:
 - Generally: when a bit-exactness gate fails after a BUILD-ONLY change,
   suspect fp-contraction before suspecting the code.
 
-## charmc mis-parses `-march=X -Ofast` in that token order (2026-08-15)
+## RETRACTED: "charmc mis-parses `-march=X -Ofast`" — it was the shell (2026-08-15)
 
-    charmc ... -march=znver3 -Ofast -c x.C -o x.o
-      -> cc1plus: error: bad value 'znver3 -Ofast' for '-march=' switch
+Recorded and withdrawn the same day; kept because the wrong version
+briefly reached a standing "read this first" document, and because the
+real lesson is the more useful one.
 
-The two tokens reach cc1plus joined into the `-march=` value. Reversing
-them (`-Ofast -march=znver3`) works. The error message names `-march=`,
-which sends you hunting for an unsupported architecture — the
-architecture is fine, the argument packing is not.
+The claim was that charmc joined the two tokens, cc1plus reporting
+`bad value 'znver3 -Ofast' for '-march=' switch`. The actual cause: the
+probe harness ran under **zsh**, which does NOT word-split an unquoted
+`$var`. The flag list expanded to a SINGLE argument, and charmc passed
+it through faithfully. From bash, with genuinely separate arguments,
+`charmc -g -O3 -march=znver3 -Ofast -c x.C -o x.o` succeeds. Flag order
+is free and no build was ever affected.
+
+LESSON: when a compiler rejects a flag VALUE that visibly contains a
+space or a second flag, suspect the argument packing in your harness
+before the compiler. On zsh specifically, `$flags` is one word — use an
+array (`${=flags}` or `"${flags[@]}"`), or write build scripts with a
+`#!/bin/bash` shebang.
 
 ## A nodegroup branch entry method can run on ANY PE of the process (2026-08-15)
 
