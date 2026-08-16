@@ -581,11 +581,20 @@ Evidence, all paratreet2 2B/16-node jobs:
 | 19861888 | afternoon | prewire-2 + both traced arms OOM'd |
 | 19932506 | evening | ran, but phaseA inflated |
 | 19935188 | 23:30 | ALL SIX arms OOM-killed, nothing usable |
+| 19979198 | 16:12 | uniform slowdown to the srun limit, rc=143 |
 
 Timing is also visible without a crash: the SAME configuration measured
 phaseA 27-39 s in an evening window and 1.03 s at ~10:35 — a ~30x swing
 with identical code and inputs. So an evening job that "works" can still
 be worthless for timing.
+
+SECOND FAILURE MODE (2026-08-16, job 19979198): the degradation does not
+always OOM. It can present as uniform slowness with NO crash and no IBV
+cascade — decomposition 10.5 s -> 120.7 s (11.5x), of which the particle
+flush alone was 114 s, and tree build 0.57 s -> 91.3 s (160x), running
+into the srun time limit with rc=143 and printing nothing usable. So a
+job that "just seems slow" in the afternoon is the same fault, not
+contention.
 
 PRACTICE: submit measurement jobs with `--begin=<date>T09:30:00` (Anvil
 local) rather than letting them run when the queue happens to drain.
