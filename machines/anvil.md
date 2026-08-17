@@ -599,3 +599,12 @@ contention.
 PRACTICE: submit measurement jobs with `--begin=<date>T09:30:00` (Anvil
 local) rather than letting them run when the queue happens to drain.
 Counts/exactness from an evening run are still valid; timings are not.
+
+Scheduling nuance (2026-08-17): `--begin` is a HARD earliest-start
+(EligibleTime), not a preference — a job queued for tomorrow morning has
+zero chance of running today, and making it eligible early requires
+`scontrol update JobId=<id> StartTime=<t>`. Also: these 2B jobs run
+2-5 MINUTES in a healthy window, so several can share one 09:00-12:00
+window comfortably — deferring a second job to the NEXT morning because
+one is already queued at 09:30 is over-cautious; begin it 60-90 min
+later the same morning instead.
