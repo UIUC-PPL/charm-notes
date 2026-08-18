@@ -1021,6 +1021,33 @@ Still unexplained: why a single busy pair is immune while 8 peers at a
 SHORTER per-pair idle interval are not, and why the stall rate decays
 ~35x over a run at fixed configuration.
 
+**FABRIC-SCOPED (2026-08-18, Frontier jobs 5302846 / 5303887 / 5303902):
+the bug is an InfiniBand-path (libfabric/IBV provider) behaviour and does
+not exist on Slingshot/CXI.** Every measurement above was made on Anvil
+over Mellanox InfiniBand. The reproducer rebuilt at the application's own
+shape (128 ranks x 14 threads x 7 devices) on Frontier: 220,000 round
+trips, 0 over 1 ms, at K = 1..64 and silences of 5..60 s, ring on or off
+— while the application-level trigger (2.4-2.8 s per-PE silences ending
+in K=48-108 two-way fan-ins) fires three times per FoF run there. FoF's
+timings are unchanged with the ring off. Keep the ring where it runs (it
+is load-bearing on InfiniBand and costs nothing measurable), but do not
+credit it for stall-free runs on CXI, and scope any writeup of this bug
+to the fabric.
+
+**reconverse `+backend_poll_thread` is not an on/off switch (read
+scheduler.cpp:182, convcore.cpp:351, comm_backend_lci2.cpp:225 before
+tuning it).** There is no separate progress thread: ranks with
+`rank % backend_poll_thread == 0` call progress() inline in the
+scheduler loop, and progress() advances ONLY the caller's own device
+(device_id = thread_id / ceil(nthreads/ndevices)). Values below 1 clamp
+UP to 1 (= every rank polls, MORE progress, not none). The invariant is
+`backend_poll_thread x lci_ndevices = ppn`: at ppn 14 / ndevices 7 the
+recommended 2 is the unique value covering every device exactly once;
+14 (one poller per process) leaves devices 1-6 unprogressed and
+deadlocks at startup, before any input is read. Progress starvation
+cannot be tested with this flag — the only reachable states are "every
+device covered once" and "twice".
+
 **Four of our own hypotheses died here, each to a purpose-built test:**
 uniform per-message tail (0/20,000 single-peer); receive-side
 absorption-rate collapse (predicts 4.4 ms at R=96 vs 12.23 observed, and
