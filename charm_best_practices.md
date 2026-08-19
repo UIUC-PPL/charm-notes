@@ -1048,6 +1048,30 @@ deadlocks at startup, before any input is read. Progress starvation
 cannot be tested with this flag — the only reachable states are "every
 device covered once" and "twice".
 
+**FI_THREAD_DOMAIN forks: one user thread per libfabric domain, or else
+(2026-08-18, Frontier jobs 5305170/5305230).** An LCI fork that downgrades
+`domain_attr->threading` from FI_THREAD_SAFE to FI_THREAD_DOMAIN (for cxi)
+makes reconverse's thread-to-device mapping unsafe whenever
+ceil(ppn/ndevices) > 1: two threads sharing a domain corrupt the CXI
+provider's internal queues, presenting as segfault, "double free", OR a
+silent whole-walltime hang with no error. The reproducer fails 8/8 with
+two threads per domain and is clean with one; production FI_THREAD_SAFE
+tolerates both. So the device-mapping rule has TWO clauses: every device
+needs a poller (backend_poll_thread stride), AND — under FI_THREAD_DOMAIN
+— no device may have more than one user thread, which forces
+ndevices = ppn (+backend_poll_thread 1). Related landmine in the same
+fork: a dangling `} else` makes setting LCI_OFI_THREADING_HINT to ANY
+value also drop FI_PROGRESS_MANUAL — the debugging knob itself causes
+provider-default progress.
+
+**Linker trap when A/B-ing two builds of the same shared library:** the
+first link of the reproducer against the fork silently resolved to the
+PRODUCTION liblci at run time — modern linkers emit RUNPATH, which LOSES
+to LD_LIBRARY_PATH, and the other build's lib dir was on it. That would
+have "cleared" the fork with the production library's behaviour. Link
+with `-Wl,--disable-new-dtags` (forces RPATH, which wins) and gate the
+job script on `ldd` showing the intended .so before trusting any A/B.
+
 **Four of our own hypotheses died here, each to a purpose-built test:**
 uniform per-message tail (0/20,000 single-peer); receive-side
 absorption-rate collapse (predicts 4.4 ms at R=96 vs 12.23 observed, and
