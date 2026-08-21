@@ -235,3 +235,17 @@ Check the terminfo entry exists before using tmux-256color:
 `infocmp tmux-256color >/dev/null 2>&1 && echo ok` — on a bare login node
 it often does not, and a missing entry is itself a cause of "dumb
 terminal" behaviour in TUIs.
+
+## Launch shape for paratreet2/FoF (measured 2026-08-21, relays 46/47)
+
+**ppn 7 (one PE per physical core, no SMT) beats ppn 14 by 16.5-17.2%
+at 2B/16 nodes, on BOTH the CPU and GPU arms** — two independent 3-rep
+jobs each, non-overlapping ranges. Different mechanisms per arm, so
+state them that way: GPU arm because the free SMT siblings give ROCm's
+helper threads somewhere to land (the affinity fix exploits exactly
+that headroom); CPU arm because the phase-3 walk is SMT-hostile
+(pointer-chasing traversal, -42% when siblings share a core) while
+phaseA is SMT-neutral (-3%). Not an artifact of the AUTO PE-set
+default (set effect isolated at +0.4%, inside spread). ppn 14 works;
+it is just slower here. Note piece_pairs_dropped tracks PE count, not
+set count — do not read it as split-deferral cost across shapes.
