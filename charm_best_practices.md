@@ -1072,6 +1072,47 @@ have "cleared" the fork with the production library's behaviour. Link
 with `-Wl,--disable-new-dtags` (forces RPATH, which wins) and gate the
 job script on `ldd` showing the intended .so before trusting any A/B.
 
+**GPU helper threads inherit the pinned PE's affinity mask — a class of
+bug, not a one-off (Frontier, 2026-08-20, -22% at 2B/896 PEs).** ROCm
+(and in general any lazily-initialized runtime) creates helper threads
+from whichever thread first calls it; pthread_create hands the child
+the CREATOR'S affinity mask. Under +pemap that creator is a PE pinned
+to one core, so the helper is born welded to that core and timeslices
+against a PE that spins when idle — 16 ms slices, one victim PE with
+seconds of runqueue wait, every collective paying one slice to reach
+it. Remedy: an RAII scope around the first real GPU call that widens
+the calling thread's affinity to CPUs no PE is pinned to (SMT siblings
+of the pemap, or explicitly reserved cores), then restores it —
+helpers inherit the wide mask, PEs keep their cores
+(paratreet2 fof/gpu/FoFDevice.cpp, FOF_HELPER_CPUS). Diagnosis kit
+that pinned it: an LD_PRELOAD interposer on pthread_create logging
+creator affinity + backtrace, and per-thread runqueue-wait from
+/proc/<tid>/schedstat.
+
+**Reading Projections traces programmatically — two traps that
+published false results before being written down:** (1) BEGIN_IDLE/
+END_IDLE often carry the SAME microsecond (the scheduler re-enters
+idle around a poll); records must be read in FILE ORDER — sorting by
+(time, kind) inverts the pairs and fabricates phantom overhead. PACK/
+UNPACK records NEST inside entry methods; treating their ends as
+returns to overhead reclassifies ordinary execution. (2) Each PE's
+interval from first record to first BEGIN_IDLE is trace startup, not a
+stall — exactly one per PE, and it can be present in one arm and
+absent in another (a cold input read pushes it out of the measured
+band), silently changing the A/B population.
+
+**Methodology, learned at a cost of thirteen investigation rounds: low
+utilisation is imbalance or a critical path BEFORE it is
+communication.** Sum busy time per PE first (this campaign's split:
+88% straggler tail, 12% dependence chain, 0% communication). A small
+reproducer inherits NONE of the embedding runtime's configuration —
+diff the runtime attributes each actually sets before believing a
+contradiction (an ofi_lock_mode the app set and the reproducer did not
+explained 8/8-dead vs 23/23-clean on the same library). And a trace
+window is only silent at the layer you are reading: with no entry
+methods anywhere, BEGIN/END_IDLE and Converse-level protocols (QD,
+CcdRaiseCondition waves) are still in the record.
+
 **Four of our own hypotheses died here, each to a purpose-built test:**
 uniform per-message tail (0/20,000 single-peer); receive-side
 absorption-rate collapse (predicts 4.4 ms at R=96 vs 12.23 observed, and
