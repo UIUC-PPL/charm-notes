@@ -236,21 +236,30 @@ Check the terminfo entry exists before using tmux-256color:
 it often does not, and a missing entry is itself a cause of "dumb
 terminal" behaviour in TUIs.
 
-## Launch shape for paratreet2/FoF (measured 2026-08-21, relays 46/47)
+## Launch shape and leaf size for paratreet2/FoF (final, 2026-08-21, relays 46-65)
 
-**ppn 7 (one PE per physical core, no SMT) beats ppn 14 by 16.5-17.2%
-at 2B/16 nodes, on BOTH the CPU and GPU arms** — two independent 3-rep
-jobs each, non-overlapping ranges. Different mechanisms per arm, so
-state them that way: GPU arm because the free SMT siblings give ROCm's
-helper threads somewhere to land (the affinity fix exploits exactly
-that headroom); CPU arm because the phase-3 walk is SMT-hostile
-(pointer-chasing traversal, -42% when siblings share a core) while
-phaseA is SMT-neutral (-3%). Not an artifact of the AUTO PE-set
-default (set effect isolated at +0.4%, inside spread). ppn 14 works;
-it is just slower here. Note piece_pairs_dropped tracks PE count, not
-set count — do not read it as split-deferral cost across shapes.
-CAVEAT added 08-21: these shape runs carried -l 128 (the GPU arm's
-leaf, wrongly inherited into the CPU scripts — that one flag was the
-entire "5.15 s baseline does not reproduce" mystery, costing phaseA
-2.5x). CPU runs use the default leaf (12); the ppn-7 CPU verdict is
-pending a recheck at that leaf.
+Superseding the earlier version of this section (its +17% ppn claim was
+measured on a Debug runtime at the GPU arm's leaf size — a relative A/B
+at the wrong operating point).
+
+- **Leaf size is a first-order knob with OPPOSITE optima per arm** (full
+  sweeps, 2B/16, production builds): **CPU-only -l 32** (shallow U over
+  24-48; the default 12 costs +11.5%, the GPU's 128 costs +47%);
+  **GPU -l 128** (true interior minimum; 12 costs +28%, 384 +53%). The
+  optima differ for a reason: a large leaf is brute-force pair work for
+  host phaseA but a better-shaped unit of device work.
+- **CPU arm: ppn is a nearly free choice.** At production + leaf 32 the
+  ppn-7-vs-14 effect is +0.8% (real, non-overlapping ranges, nearly
+  worthless). Best CPU wall 4785-4811 ms (ppn 7, -l 32). The earlier
+  SMT decomposition inverts at leaf 32 — do not quote shape results
+  outside their operating point.
+- **GPU arm: ppn 7 decisive** (2881.9 vs 3991.2 ms with the affinity
+  fix; the free SMT siblings are the fix's landing zone). Best GPU wall
+  2825-2882 ms (ppn 7, -l 128, fix on).
+- piece_pairs_dropped tracks PE count, not set count — do not read it
+  as split-deferral cost across shapes.
+- Build rules that were worth 25-30% combined: charm --with-production
+  ALWAYS (Debug costs 15.6% at 2B), and never link -tracemode into a
+  timing binary (7.7% while disabled). --with-production and TRACING=1
+  are ORTHOGONAL in buildcmake — an optimized runtime CAN trace; use
+  that for traced-but-honest runs (~3% cost, relay65).
