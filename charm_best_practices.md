@@ -1147,6 +1147,22 @@ the loaded libfabric (built vs 1.20.1, runs load 2.3.1) or node
 placement; do not trust old absolute baselines across environment
 drift without a same-day rerun of the original artefact.
 
+**`sbatch --export` splits on COMMAS — never pass a comma-containing
+value (pemap, cpu lists) through it** (Frontier 2026-08-21, cost five
+jobs): `--export=ALL,PEMAP=1-7,9-15,...` delivers `PEMAP=1-7` and
+silently discards the rest; 56 PEs then pinned to 7 cores ran 8-9x
+slow with no error anywhere except one `cpuaffinity PE-core map` line.
+Derive such values inside the job script and ASSERT the launch shape
+(count the pemap blocks, echo the map actually used) — severe
+oversubscription is invisible in every application-level number.
+
+**Poll-stride completeness is shape-dependent and the failure is a
+HANG:** at one PE per device (ppn 7 / ndevices 7), backend_poll_thread
+2 permanently silences the odd devices (3/3 hangs); the same stride is
+harmless at two PEs per device. The rule stays "every device needs a
+poller", checked against the ACTUAL shape; stride 1 costs nothing
+measurable there.
+
 **Four of our own hypotheses died here, each to a purpose-built test:**
 uniform per-message tail (0/20,000 single-peer); receive-side
 absorption-rate collapse (predicts 4.4 ms at R=96 vs 12.23 observed, and
