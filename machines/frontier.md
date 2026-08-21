@@ -249,3 +249,8 @@ phaseA is SMT-neutral (-3%). Not an artifact of the AUTO PE-set
 default (set effect isolated at +0.4%, inside spread). ppn 14 works;
 it is just slower here. Note piece_pairs_dropped tracks PE count, not
 set count — do not read it as split-deferral cost across shapes.
+CAVEAT added 08-21: these shape runs carried -l 128 (the GPU arm's
+leaf, wrongly inherited into the CPU scripts — that one flag was the
+entire "5.15 s baseline does not reproduce" mystery, costing phaseA
+2.5x). CPU runs use the default leaf (12); the ppn-7 CPU verdict is
+pending a recheck at that leaf.
