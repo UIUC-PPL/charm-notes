@@ -1113,6 +1113,40 @@ window is only silent at the layer you are reading: with no entry
 methods anywhere, BEGIN/END_IDLE and Converse-level protocols (QD,
 CcdRaiseCondition waves) are still in the record.
 
+**Two build defects that inflated every measurement for a week
+(Frontier, 2026-08-21, relay49 of the FoF campaign):** (1) reconverse
+charm built without `--with-production` gets CMAKE_BUILD_TYPE=Debug —
+NOT merely "error checking on" but NO OPTIMIZATION AT ALL in the
+runtime: 15.6% at 2B/1792 PEs (+25% whole-run on a laptop netlrts
+A/B). (2) An application binary LINKED with `-tracemode projections`
+pays for the hooks in the message path even with tracing never enabled
+at runtime: 7.7% on a fine-grained workload. Rules: production runtime
+for any timing; NEVER link tracing into a timing binary — keep a
+separate traced binary. Relative A/Bs survive such defects (same build
+both sides); absolutes do not.
+
+**Gate on the artefact, not the environment.** An ldd/LD_LIBRARY_PATH
+gate cannot detect running the WRONG BINARY — the SONAME resolves
+through the same path and always agrees with the script (a wrong-binary
+run passed every environment gate; caught only by checking the
+binary's own identity, e.g. `nm | grep -c TraceProjections` = 0 for a
+production arm). Slurm companion trap: an srun step that changes
+--ntasks INHERITS the batch --cpus-per-task, silently shrinking the
+step cpuset (CmiSetCPUAffinity failures at pemap entries outside it) —
+revisit --cpus-per-task whenever --ntasks changes.
+
+**SMT on Frontier EPYC for tree-walk workloads: the second hardware
+thread returns ~12% throughput** (same 896 PEs on half the physical
+cores = 1.787x slower, 2026-08-21 four-placement separation), so
+doubling PEs via SMT is a net LOSS when parallel overhead exceeds that
+(+17.5% measured); one PE per physical core is the right default shape
+for both CPU and GPU arms of this workload family. And a mystery for
+the record: a byte-identical binary + runtime + config reproduced a
+5.15 s result as 7.69 s two days later (phaseA 2.5x) — suspects are
+the loaded libfabric (built vs 1.20.1, runs load 2.3.1) or node
+placement; do not trust old absolute baselines across environment
+drift without a same-day rerun of the original artefact.
+
 **Four of our own hypotheses died here, each to a purpose-built test:**
 uniform per-message tail (0/20,000 single-peer); receive-side
 absorption-rate collapse (predicts 4.4 ms at R=96 vs 12.23 observed, and
