@@ -1593,3 +1593,33 @@ print is `CkMyNode() == 0` alone. Note `CkMyNode()==0 && CkMyRank()==0`
 is ALSO wrong for the same reason (verified: it printed at ppn 2 and was
 silent at ppn 4). For code that may be built either way, test
 `this->isNodeGroup()`.
+
+## A periodic Charm-message heartbeat deadlocks CkWaitQD (2026-08-22)
+
+Any self-rearming cycle of CHARM-LEVEL messages (an entry method that
+re-sends itself, or a Ccd timer whose callback sends entry-method
+messages every tick) keeps quiescence from EVER being reached: QD needs
+two consecutive identical global created/processed counts, and the
+heartbeat advances them every period. If the heartbeat's stop condition
+is set by code that runs AFTER a CkWaitQD, that is a deadlock by
+construction — the run hangs at the QD with the machine near idle.
+Measured on a periodic union-find compression wave in paratreet2; the
+hang reproduced deterministically at 1M/16 processes.
+
+Three ways out, all used or precedented in that codebase:
+1. Send the heartbeat as RAW CONVERSE messages (CmiSyncSend etc.) —
+   invisible to QD. Right for keep-alive/monitoring traffic.
+2. Make ticks MESSAGE-FREE AT FIXPOINT: keep the timer chain at Ccd
+   level (CcdCallFnAfter re-arms are QD-invisible) and gate any
+   message-sending work on a local dirty flag that only fresh state
+   changes set. When the system settles, ticks still fire but send
+   nothing, so QD proceeds and the post-QD code can disarm the chain.
+3. Replace the CkWaitQD inside the cycle's scope with user-level
+   termination detection carried BY the cycle itself (put global
+   created/processed counters in a repeating reduction; two consecutive
+   equal rounds = done — the same four-counter scheme QD implements).
+   Right when the cycle exists anyway for introspection/control.
+
+Corollary: a periodic mechanism scoped to one phase must have its
+disarm reachable WITHOUT quiescence, or use (2)/(3). "Disarm after the
+QD" is the exact trap.
