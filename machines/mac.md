@@ -43,9 +43,15 @@ project status out of this file; it belongs in per-project memory.
 | `~/software/charm/netlrts-darwin-arm8-smp` | classic | OLD, non-production build — never use for benchmarking |
 | `~/software/charm-sumdbytes/charm` (build `netlrts-darwin-arm8`) | classic, upstream main | fresh clone for the .sumd message-bytes work (charm#3937); built with `-DTRACING=1` |
 
-**Do not build or edit in `~/software/recharm/charm`** (checked 2026-08-11):
-it carries uncommitted work in `src/ck-perf/trace-summary.{C,h,ci}` and
-`trace-summaryBOC.h`. Clone elsewhere for charm-side changes.
+**`~/software/recharm/charm` is usable for charm-side work again** (checked
+2026-08-24; the 2026-08-11 do-not-edit warning is obsolete): the
+trace-summary work it referred to is committed as `90f05d8cb`, the branch
+tip (local-only — 1 ahead / 59 behind origin/reconverse-specific-build;
+the embedded reconverse is 0 ahead / 14 behind origin/main). Remaining
+uncommitted dirt is small: `tests/charm++/qd/qdbench.{C,ci}` (~106 lines)
+and, in reconverse, `tests/CMakeLists.txt` + untracked `tests/abort_peer/`
+— commit or stash before new work. Pull CAUTIOUSLY: catching up may import
+the upstream drift below into the one tree that still builds.
 
 **Upstream `reconverse-specific-build` no longer configures on this Mac**
 (2026-08-11): `src/arch/reconverse-darwin-arm8` has no `conv-mach-smp.h`
