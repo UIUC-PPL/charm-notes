@@ -1653,3 +1653,34 @@ RELATED, same session: charm's own PAPI feature test does not consult
 with empty `CMAKE_C_FLAGS`, so a module-provided PAPI in a spack tree is
 invisible to it. Pass `-DCMAKE_C_FLAGS="-I$PAPI_DIR/include"` and the
 matching link flags.
+
+## A smoke test can be sabotaged by the test's own source: diff the example before blaming the runtime (2026-08-24)
+
+Catching a charm tree up 59 commits, the standard smoke test
+(examples/charm++/hello/1darray) "failed" deterministically on a build
+that was in fact healthy: only "Hello 0 created" printed, then silent
+exit 0, at every PE count. The build was innocent — an upstream merge
+commit (charm 9e48ce995, "merge reconverse changes with lb") had
+committed debug hackery INTO the example itself: `CkExit()` inside the
+Hello constructor and the init callback commented out. The binary did
+exactly what the source said. Meanwhile the full pingpong benchmark
+(19 phases) passed on the same build, which is what localized the
+"failure" to the one example.
+
+Rules:
+- When a smoke test breaks after a pull, `git diff <trusted-sha> --
+  <test source>` BEFORE debugging the runtime — upstream branches
+  (especially long-lived feature/merge branches) can carry debug
+  pollution in examples and tests.
+- Prefer a smoke suite with more than one independent program; one
+  passing and one "failing" points at the failing test's source, not
+  the runtime.
+- Silent early exit 0 is the signature of a stray CkExit, not a crash
+  (a crash gives a nonzero status or a signal message).
+
+Same session, for the record: the 2026-08-11 "upstream
+reconverse-specific-build does not configure on this Mac" drift
+resolved itself once reconverse main gained include/persistent.h
+(reconverse#192) — the missing conv-mach-smp.h was never the actual
+blocker with the --with-fetch-reconverse-dir invocation. Verified by a
+from-scratch build of the upstream tip passing full smoke on macOS.

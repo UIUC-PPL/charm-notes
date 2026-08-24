@@ -43,24 +43,33 @@ project status out of this file; it belongs in per-project memory.
 | `~/software/charm/netlrts-darwin-arm8-smp` | classic | OLD, non-production build — never use for benchmarking |
 | `~/software/charm-sumdbytes/charm` (build `netlrts-darwin-arm8`) | classic, upstream main | fresh clone for the .sumd message-bytes work (charm#3937); built with `-DTRACING=1` |
 
-**`~/software/recharm/charm` is usable for charm-side work again** (checked
-2026-08-24; the 2026-08-11 do-not-edit warning is obsolete): the
-trace-summary work it referred to is committed as `90f05d8cb`, the branch
-tip (local-only — 1 ahead / 59 behind origin/reconverse-specific-build;
-the embedded reconverse is 0 ahead / 14 behind origin/main). Remaining
-uncommitted dirt is small: `tests/charm++/qd/qdbench.{C,ci}` (~106 lines)
-and, in reconverse, `tests/CMakeLists.txt` + untracked `tests/abort_peer/`
-— commit or stash before new work. Pull CAUTIOUSLY: catching up may import
-the upstream drift below into the one tree that still builds.
+**`~/software/recharm` caught up to upstream 2026-08-24; the 2026-08-11
+drift warning is RESOLVED.** charm is at origin/reconverse-specific-build
+tip `90ef159b9` + one local commit (`e606c3318`, qdbench cliff-diagnosis
+knobs — candidate to push); the embedded reconverse is at origin/main tip
+`36ab139` + one local commit (`c0d0d9f`, tests/abort_peer probe —
+candidate to push/PR). The old "fresh clone does not configure" drift is
+gone: reconverse main gained `include/persistent.h` (reconverse#192), and
+a from-scratch `./build charm++ reconverse-darwin-arm8 --with-production
+--with-fetch-reconverse-dir=$PWD/reconverse` of the upstream tip builds
+and passes smoke (hello 1darray + all 19 pingpong phases, single- and
+multi-process) on this Mac. Our local trace-summary commit turned out
+byte-identical to upstream `90ef159b9` — already upstream, dropped on
+rebase. Fallbacks kept until further confidence:
+`~/software/recharm/charm/reconverse-darwin-arm8.bak-20260824` (the
+pre-catch-up build) and the worktree `~/software/recharm/charm-upstream-test`
+(upstream tip + its own fresh build) — delete both when no longer needed.
 
-**Upstream `reconverse-specific-build` no longer configures on this Mac**
-(2026-08-11): `src/arch/reconverse-darwin-arm8` has no `conv-mach-smp.h`
-(netlrts has one), so `ck-core` dies on `conv-mach-opt.h` whatever the SMP
-flag, and the reconverse it now fetches wants `include/persistent.h`, which
-the local reconverse checkout does not have. The working build above
-predates that drift and will not reproduce from a fresh clone. Tracing code
-(`trace-summary.C/.h`) is byte-identical on main and that branch, so test
-tracing changes with a classic netlrts build.
+**Traps in the caught-up tree (2026-08-24):**
+- `examples/charm++/hello/1darray/hello.C` was POLLUTED UPSTREAM by
+  `9e48ce995` ("merge reconverse changes with lb"): `CkExit()` inside the
+  Hello constructor and the init callback commented out, so it prints
+  "Hello 0 created" and exits 0 — looks like a runtime break but is the
+  example itself. Don't use it as a smoke test until reverted upstream;
+  use benchmarks/charm++/pingpong (19 phases, unpolluted).
+- Binaries need `DYLD_LIBRARY_PATH=<build>/lib` even SINGLE-process now:
+  libreconverse is a dylib and charmc-linked binaries carry no LC_RPATH
+  ("Library not loaded: @rpath/libreconverse.dylib" without it).
 
 recharm details: the reconverse checkout lives at
 `~/software/recharm/charm/reconverse` and is consumed in place
