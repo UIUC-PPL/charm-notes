@@ -1623,3 +1623,33 @@ Three ways out, all used or precedented in that codebase:
 Corollary: a periodic mechanism scoped to one phase must have its
 disarm reachable WITHOUT quiescence, or use (2)/(3). "Disarm after the
 QD" is the exact trap.
+
+## `module load` in a pipeline silently does nothing (2026-08-24)
+
+On Cray/OLCF systems `module` is a SHELL FUNCTION, not a binary. Any
+construct that runs it in a subshell — a pipe most commonly —
+executes the load in a child process, so every `setenv` it performs is
+discarded when the child exits. The command still reports success:
+
+    module load papi/7.1.0 2>&1 | tail -1     # loads NOTHING
+    module load papi/7.1.0                    # loads it
+
+Found on Frontier when a PAPI build could not see `papi.h` despite an
+apparently successful load. The same piped idiom was in four earlier
+build scripts of that campaign, so those module loads had also been
+doing nothing; the builds worked anyway because cmake was handed
+absolute compiler paths and the login environment already carried the
+rest — i.e. the failure is silent AND usually harmless, which is why it
+survives.
+
+Check with `module list` or by testing the variable the module sets
+(note the name may not be what you expect: the OLCF PAPI module sets
+`OLCF_PAPI_ROOT`, not `PAPI_DIR`) — never by the exit status or output
+of the load itself.
+
+RELATED, same session: charm's own PAPI feature test does not consult
+`CMAKE_PREFIX_PATH` or any `find_package` —
+`cmake/detect-features-c.cmake:244` uses a bare `check_c_source_compiles`
+with empty `CMAKE_C_FLAGS`, so a module-provided PAPI in a spack tree is
+invisible to it. Pass `-DCMAKE_C_FLAGS="-I$PAPI_DIR/include"` and the
+matching link flags.
