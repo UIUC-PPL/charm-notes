@@ -182,6 +182,38 @@ as "Ritvik's reconverse build used by the FoF sweeps". No such directory is
 visible from this account (`x-lkale`) — presumably it is under another
 member's home, which is not readable. Do not assume it exists.
 
+## Fresh charm clone quickstart (runtime-branch work)
+
+For sessions setting up a NEW charm/reconverse tree (e.g. a branch under
+review) rather than using `recharm/`. Every fact here is expanded in the
+sections around it; this is the assembled path.
+
+    cd $PROJECT/$USER/software           # NEVER $HOME (25 GB quota)
+    git clone https://github.com/charmplusplus/charm <dir> && cd <dir>/
+    git checkout <branch>
+    git clone https://github.com/charmplusplus/reconverse   # in-tree copy
+    module load python/3.9.5 hwloc       # BOTH required; failures are silent
+    ./build charm++ reconverse-linux-x86_64 --with-production -j8 \
+        --with-fetch-reconverse-dir=$PWD/reconverse \
+        --with-cmake-args="-DRECONVERSE_ENABLE_CPU_AFFINITY=ON -DHWLOC_ROOT_DIR=$HWLOC_ROOT"
+
+- Raw `-D` options MUST ride `--with-cmake-args`; passed directly they are
+  silently appended to compiler flags (see tracedcharm section).
+- The new tree needs its own environment: the existing `recharm/env.sh`
+  points `LD_LIBRARY_PATH` at the OLD build — copy its pattern, point it at
+  `<newbuild>/lib`. Do not modify the `recharm/` tree itself; it is the
+  baseline for existing measurement campaigns.
+- Smoke test with `benchmarks/charm++/pingpong` (19 phases) under both
+  `srun --mpi=pmi2 -n 1` and `-n 2` (single-process ALSO goes through srun
+  on compute nodes — see the 2026-08-03 section). Do not smoke with
+  `examples/charm++/hello/1darray`: upstream `9e48ce995` left a `CkExit()`
+  in the Hello constructor, so it exits 0 after one line and false-passes.
+- Before trusting `ctest` in a reconverse tests build:
+  `RECONVERSE_TEST_LAUNCHER='srun --mpi=pmi2'` (default `mpirun` runs every
+  rank as an isolated 1-process job and multi-process tests false-pass; see
+  the mpirun-vs-srun section), plus `-DRECONVERSE_BUILD_TESTS=ON
+  -DRECONVERSE_AUTOFETCH_LCI2=ON` (Hazards).
+
 ## Cluster-finding stack (paratreet2 / unionfind / htram)
 
 `$PROJECT/$USER/software/clusterfinding/` — sibling layout mirroring the
