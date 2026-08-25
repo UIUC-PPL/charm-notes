@@ -63,10 +63,13 @@ has an explicit pre-2.0 API branch).
 | `recharm/reconverse-tests-build/` | reconverse | standalone reconverse + tests, registration cache **OFF** — the A/B baseline, keep untouched |
 | `recharm/reconverse-regcache-build/` | reconverse | same, registration cache **ON** |
 
-Versions: charm branch `reconverse-specific-build` @ `9460a3469`,
-reconverse branch `main` @ `9d66483`. Note charm `main` is effectively
-frozen (574 commits in 2019 → 5 in 2026), so reconverse work happens on
-`reconverse-specific-build`.
+Versions (re-verified over ssh 2026-08-25): charm branch
+`reconverse-specific-build` @ `90f05d8cb`, reconverse branch `main` @
+`9d66483` — the PRE-catch-up state, behind upstream (charm tip `90ef159b9`,
+reconverse tip `36ab139`; the laptop's recharm caught up 2026-08-24, see
+machines/mac.md). Never A/B across a catch-up of this tree. Note charm
+`main` is effectively frozen (574 commits in 2019 → 5 in 2026), so
+reconverse work happens on `reconverse-specific-build`.
 
 Build command (user-installed-reconverse variant, so reconverse itself stays
 editable — `charm/reconverse/` is the only copy, no `_deps` duplicate to
