@@ -60,6 +60,16 @@ rebase. Fallbacks kept until further confidence:
 pre-catch-up build) and the worktree `~/software/recharm/charm-upstream-test`
 (upstream tip + its own fresh build) — delete both when no longer needed.
 
+**Record-replay on reconverse (2026-08-25): WORKS.** Build at
+`~/software/recharm/charm/reconverse-darwin-arm8-replay` (charm-on-
+reconverse with `--enable-tracing --enable-replay -g`; production build
+unchanged). Recording idiom on reconverse REQUIRES per-record flushing --
+`./app +pe N +record +recplay-logsize 129` -- because reconverse's exit
+path never runs the watcher destructors (classic flushes there); replay
+is plain `+replay`. Multi-process record/replay also works (lcrun).
+Reconverse-side prerequisites are PR charmplusplus/reconverse#207; the
+charm-side record-replay repairs are on reconverse-specific-build.
+
 **Traps in the caught-up tree (2026-08-24):**
 - `examples/charm++/hello/1darray/hello.C` was POLLUTED UPSTREAM by
   `9e48ce995` ("merge reconverse changes with lb"): `CkExit()` inside the

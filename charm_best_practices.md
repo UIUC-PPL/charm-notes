@@ -1774,3 +1774,36 @@ Lessons:
   localized the divergent producer in minutes.
 - Debug-print macros referencing member fields (DEBR's AA/AB) break in
   static member functions; keep a memberless variant for those.
+
+## Record-replay ported to reconverse: the port was three symbols (2026-08-25)
+
+The feared port was almost nothing: charm's record-replay engine is
+Ck-layer (runtime-agnostic) and reconverse already had CmiNumberHandler,
+CthResumeNormalThreadIdx/CthResumeNormalThread, CthThreadToken, and
+CmiMemoryIs. Missing were exactly: `CpdSetInitializeMemory` (classic's
+default allocator has it as a no-op; only charmdebug implements it) and
+`CsdEnqueue`/`CsdEnqueueLifo` (the engine re-injects delayed messages
+with them; mapped to a FIFO CmiPushPE onto the caller's own queue --
+LIFO is only a promptness hint since every delivery re-checks the
+expected-next predicate). Reconverse PR #207. Build with
+`--enable-tracing --enable-replay` (REPLAY is compiled out otherwise;
+enabling it also adds the envelope `event` field, so it changes message
+layout -- full rebuild, separate build dir).
+
+Two idioms that matter on reconverse:
+- Record with `+recplay-logsize 129` ALWAYS: reconverse's exit path does
+  not run the watcher destructors, so without per-record flushing the
+  logs are empty even after a clean PASS. (Follow-up: hook an explicit
+  flush into CkExit.)
+- Validated end-to-end: 2000-step / 10491-migration bcastred runs replay
+  twice to identical completion, single-process AND 2-process lcrun; the
+  migration count matches the classic build at the same seed (the test's
+  deterministic schedule is runtime-independent -- a free cross-runtime
+  consistency check).
+
+Also closed en route (#3941): the branch's classic-arch breakage had two
+build bugs (buildcmake forced RECONVERSE=ON for every build -- 'fake
+argument for now' -- and a conv-static dependency on the nonexistent
+reconverse target), but the deeper truth is the classic converse library
+build is COMMENTED OUT on the branch, so classic-from-branch needs
+restoration work that is better spent landing the branch on main.
