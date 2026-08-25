@@ -1739,3 +1739,38 @@ list exhaustive under MIGRATION, not just under static populations.
    the last action AFTER contribute (in-flight redNo path), CkEnforce
    everywhere, deterministic lockstep migration schedule (seeded hash, no
    coordination messages). tests/charm++/anytime_bcastred.
+
+## Replay of SMP node-queue messages: the winner-rank race, and silence as a symptom (2026-08-25, #3940)
+
+Second half of the record-replay repair. `+replay` of any array-broadcast
+program stalled silently right after mainchare construction. Mechanism:
+`BocBcastMsg`/`ArrayBcastMsg` ride the NODE queue; an arbitrary rank
+claims one and performs the within-node fan-out stamped with ITS OWN
+(srcPe, event) (`_processBocBcastMsg` -> `_sendMsgBranchWithinNode`).
+The recording captures the record-run's winner; in replay a different
+rank can claim it, and the replay watcher buffered it there forever —
+stranding the original AND suppressing the fan-out every other rank's
+log expects. The existing SMP shepherding branch (bounce unclaimed
+node-queue messages to the next rank until the recorded owner claims
+them) covered only NodeBocInitMsg/ForNodeBocMsg, which predate the
+array-broadcast types. Fix: add both to the bounce set. Behind the
+stall hid the same envelope-swap crash as the recorder's (unconditional
+CkPackMessage round trip vs CkArrayBroadcaster's retained pointer) —
+same CRC-gate fix. Both on `recordreplay-fixes` (0da33f5d5); a
+2000-step / 10k-migration broadcast run now records and replays to
+identical completion.
+
+Lessons:
+- In replay-style tools, ANY nondeterministic ownership choice (which
+  rank pops a shared queue) must either be shepherded to the recorded
+  owner or made deterministic; enumerate every message type that rides a
+  shared queue when auditing such a tool — new types added after the
+  tool (ArrayBcastMsg here) silently fall outside its model.
+- A replay that stalls with NO diagnostics is itself a signature:
+  srcPe/event mismatches are silent (only EP/size mismatches print), so
+  "no warnings + no progress" means the expected message NEVER EXISTED
+  in this run (a producer diverged), not that it was reordered. Enabling
+  REPLAYDEBUG and reading the first few getNext-vs-arrival lines
+  localized the divergent producer in minutes.
+- Debug-print macros referencing member fields (DEBR's AA/AB) break in
+  static member functions; keep a memberless variant for those.
