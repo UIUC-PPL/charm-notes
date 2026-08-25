@@ -1684,3 +1684,58 @@ resolved itself once reconverse main gained include/persistent.h
 (reconverse#192) — the missing conv-mach-smp.h was never the actual
 blocker with the --with-fetch-reconverse-dir invocation. Verified by a
 from-scratch build of the upstream tip passing full smoke on macOS.
+
+## Anytime migration vs the reduction tree: every no-obligation state needs a wake path (2026-08-24, #3939)
+
+Root-caused a reduction hang that only heavy anytime migration (migrateMe)
+triggers, on classic AND reconverse (shared Ck code). The barren-PE
+optimization (ReductionStarting/inactiveList) assumes every tree kid
+either self-starts a round (has a local contribution coming) or is on the
+parent's inactiveList and gets poked. Migration creates a third state:
+POPULATED BUT OBLIGATION-FREE — all elements owing the round left before
+contributing, all arrivals already contributed elsewhere (adj(redNo)
+balances lcount), lcount never touched 0. Nothing starts the round on
+that PE; the whole tree waits on a PE that owes nothing. Fix (ckreduction
+9d1177d84): on Leaving/Arriving/Died, if !inProgress && lcount>0 &&
+nContrib >= lcount+adj(redNo).lcount, eagerly start+finish (ships the
+empty result; late migrants ride LateMigrantMsg). adj only goes negative
+via migration, so migration-free programs cannot take the new path.
+
+General lesson: in a collective protocol with a liveness optimization
+that prunes "inactive" participants, enumerate every state that cannot
+self-start — an optimization that whitelists wake-up paths must prove the
+list exhaustive under MIGRATION, not just under static populations.
+
+## The debugging kit that cracked it (reusable workflow)
+
+1. **Randomized msgq amplifies migration races enormously**: the hang went
+   from sporadic (needs ~500-2000 steps, often passes) to 6/6 seeds.
+   Build option --enable-randomized-msgq (cmake RANDOMIZED_MSGQ=ON;
+   classic only). The redmine-era reports (#259/#665/#667) did the same.
+2. **Record-replay (classic, +record/+replay) works and is worth
+   repairing**: needs a tracing-enabled non-production build
+   (--enable-tracing --enable-replay); log files are
+   <progname>ckreplay_<pe>.log (traceRoot naming). Three repairs were
+   needed (branch recordreplay-fixes / commit 3b5ed5e26, issue #3940):
+   +record segfaulted on ANY array broadcast (recorder's pack/unpack
+   swaps the envelope under CkArrayBroadcaster's retained pointer — now
+   packs only when CRC on); flushLog lacked fflush (a killed hung run
+   lost its log tail — use +recplay-logsize 129 for per-record flush);
+   replay aborted on truncated/empty logs (now treats truncation as the
+   end sentinel; an SMP comm thread's log is legitimately empty).
+   **+replay still stalls on array broadcasts** (open); a p2p variant of
+   the test (-B) replays deterministically to the recorded hang frontier.
+   Reconverse has NO record-replay (_replaySystem=0 stub) — porting it is
+   on the list.
+3. **Protocol-state tracing beats stack samples for distributed hangs**,
+   again: a watchdog dumping each element's (step, gotNbr, contributed)
+   isolated the lost mechanism (reductions, not broadcasts/p2p) in one
+   run; CMK_DEBUG_REDUCTIONS (#define in ckreduction.C; one DEBR in the
+   static reduceMessages needs a memberless print) then gave the exact
+   losing ledger on the stuck PE. Record the hang, replay it, read the
+   trace — no probabilistic instrumentation runs.
+4. Test design that made it findable: neighbor exchange + per-step
+   value-checked reduction + exactly-once-checked broadcast, migrateMe as
+   the last action AFTER contribute (in-flight redNo path), CkEnforce
+   everywhere, deterministic lockstep migration schedule (seeded hash, no
+   coordination messages). tests/charm++/anytime_bcastred.
