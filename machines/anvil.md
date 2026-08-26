@@ -499,6 +499,12 @@ on a login shell. All of it was hit in practice.
   `-DHWLOC_ROOT_DIR=...` (its `$ENV{HWLOC}` fallback is dead code — line 22
   tests `ENV{HWLOC}` without the `$`). Charm meanwhile builds its own
   bundled hwloc 2.10.0 in the same tree, which reconverse cannot see.
+- **hwloc is a RUNTIME requirement too, not just build-time** (2026-08-25):
+  a reconverse-linked binary built with the spack hwloc module dynamically
+  links `libhwloc.so.5` (hwloc 1.11.13), so running it in a fresh shell
+  without `module load hwloc` dies with `libhwloc.so.5: cannot open shared
+  object file`. Load the module in every shell that *runs* the binaries,
+  including batch scripts, not only the build shell.
 - Silently missing optional deps in every build here: HWLOC (above),
   TCMalloc (LCI warns of degraded performance; unquantified), LCW, PAPI,
   PMIx (see mpirun above), JPEG. Only PMIx and HWLOC have bitten so far.
