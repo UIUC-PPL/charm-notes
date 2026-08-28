@@ -499,6 +499,13 @@ on a login shell. All of it was hit in practice.
   `-DHWLOC_ROOT_DIR=...` (its `$ENV{HWLOC}` fallback is dead code — line 22
   tests `ENV{HWLOC}` without the `$`). Charm meanwhile builds its own
   bundled hwloc 2.10.0 in the same tree, which reconverse cannot see.
+- **GPU jobs need the -gpu account, not the base allocation** (2026-08-28):
+  `sbatch -p gpu-debug -A asc050025` fails at submit with `Invalid qos
+  specification` — that association carries QOS `cpu`, which the gpu
+  partitions DenyQos. Use **`-A asc050025-gpu`** for gpu/gpu-debug
+  (`sacctmgr show assoc` lists both). Also observed: gpu-debug can back
+  up with everything PENDING (Priority) despite idle-looking nodes —
+  don't assume a 13-node `mix` display means fast turnaround.
 - **hwloc is a RUNTIME requirement too, not just build-time** (2026-08-25):
   a reconverse-linked binary built with the spack hwloc module dynamically
   links `libhwloc.so.5` (hwloc 1.11.13), so running it in a fresh shell
