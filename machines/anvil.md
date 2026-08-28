@@ -499,6 +499,12 @@ on a login shell. All of it was hit in practice.
   `-DHWLOC_ROOT_DIR=...` (its `$ENV{HWLOC}` fallback is dead code — line 22
   tests `ENV{HWLOC}` without the `$`). Charm meanwhile builds its own
   bundled hwloc 2.10.0 in the same tree, which reconverse cannot see.
+- **`module load hwloc` silently swaps CUDA 13.1.0 -> 11.4.2** (2026-08-28):
+  hwloc/1.11.13 pulls cuda/11.4.2 as a dependency, and a later
+  find_package(CUDAToolkit) then resolves 11.4.2 — which lacks post-11.7
+  APIs (cuMemGetHandleForAddressRange, DMA_BUF), breaking LCI's CUDA
+  backend confusingly. Load order matters: **hwloc first, cuda/13.1.0
+  last**, so nvcc and CUDA_HOME stay on 13.1.0.
 - **GPU jobs need the -gpu account, not the base allocation** (2026-08-28):
   `sbatch -p gpu-debug -A asc050025` fails at submit with `Invalid qos
   specification` — that association carries QOS `cpu`, which the gpu
