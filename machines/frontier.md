@@ -219,6 +219,108 @@ shape results do not travel outside their operating point. Choosing a real
 Frontier map means pairing PEs with each GCD's NUMA domain, which is a
 measurement job, not a default.
 
+## Choosing a pemap on Frontier: what a 128-node GPU campaign measured
+
+The section above covers the FLAGS and the cpuset trap. This one covers the
+CONSEQUENCES, from the paratreet2/FoF campaign on this machine (2026-08-20 to
+08-29, 16 to 128 nodes, up to 7168 PEs). Everything here is measured at scale
+and some of it inverts what a single-node benchmark suggests.
+
+### The shipping map, and the launch shape it belongs to
+
+    --nodes=N --ntasks=8N --ntasks-per-node=8 --cpus-per-task=14
+    --threads-per-core=2 --gpus-per-node=8 --exclusive
+    srun --cpu-bind=none --distribution=block:block ...
+      +ppn 7 +pemap 1-7,9-15,17-23,25-31,33-39,41-47,49-55,57-63
+      +lci_ndevices 7 +backend_poll_thread 1
+
+That map is exactly the job cpuset the section above reports, and it works
+because of `--cpu-bind=none` — Slurm is told not to bind, and the runtime does
+it. GATE ON THE READBACK, never on the flag: the application prints where its
+threads actually landed, and that print is the only proof.
+
+### THE POINT OF ppn 7: the eighth thread slot is not spare, it is the fix
+
+**Do not fill every hardware thread.** A GPU runtime creates its helper threads
+lazily from whichever thread first calls it, and `pthread_create` hands the
+child the CREATOR'S affinity mask. Under `+pemap` that creator is a worker PE
+pinned to one core, so the helper is born welded to that core and timeslices
+against a PE that spins when idle. The general lesson and the remedy are in
+`charm_best_practices.md` ("GPU helper threads inherit the pinned PE's affinity
+mask"). The MAP-level consequence, which is what belongs here:
+
+**the remedy needs somewhere to put the helper, and the pemap decides whether
+that place exists.** At ppn 7 the SMT siblings of the mapped cores are free and
+the runtime widens the helper onto them automatically — no Slurm change, no
+env var. At ppn 13/14 every sibling is itself a PE, the fix has no landing
+zone, and it declines and says so. Measured worth of having that landing zone:
+**-22% at 896 PEs and -63% at 7168 PEs**, ranges fully separated at both.
+
+Two follow-ons, both measured, both counter-intuitive:
+
+- **Naming a dedicated core for helpers buys NOTHING** over the SMT siblings
+  the runtime derives by itself. Holding the PE count constant and varying only
+  whether a spare physical core was named: 860.2 ms against 857.8 ms,
+  overlapping ranges. Reserve the explicit route for ppn 13/14, where there is
+  no sibling to derive.
+- **`--core-spec=0` costs about 1100 SECONDS OF STARTUP PER RUN at 128 nodes**
+  and changes the iteration by nothing measurable (1516.9 ms with it against
+  1514.9 ms without). It entered as the ppn 13/14 escape hatch and then got
+  written down as though it were the fix. It is not. Do not put it in a Slurm
+  header above about 16 nodes. This cost sat outside every phase timer and was
+  invisible for weeks — REPORT THE WALL NEXT TO THE PHASE TIMER, always.
+
+### SMT: what it is actually worth, so the ppn choice is not guesswork
+
+Four placements, 896 PEs held constant in three of them, 2 billion particles:
+
+    8 proc x  7 PE   896 PEs   56 cores   no SMT    baseline
+    4 proc x 14 PE   896 PEs   56 cores   no SMT     +2.6%
+    8 proc x 14 PE  1792 PEs   56 cores   SMT        +22%
+    8 proc x  7 PE   896 PEs   28 cores   SMT        +79%
+
+Reading the last row: the same PEs on half the cores is 1.787x slower, so
+**SMT contributes about 12% of throughput here** (if it gave nothing that would
+be 2.0x). Therefore at ppn 14 the extra 896 PEs on the sibling threads cost
+more than the 12% they buy. Only 2.6 points of the ppn-14 penalty is
+PEs-per-process; the rest is SMT.
+
+### "Is the OS interfering?" — measured, and the answer was no
+
+The natural suspicion when a pemap looks wrong is OS or IRQ noise on the
+shared core. It was tested directly and rejected: per-thread runqueue wait from
+`/proc/<tid>/schedstat` was 0.10-0.12% of PE cpu time at ppn 14, and LOWEST of
+all (0.01-0.02%) in the placement that fills every physical core.
+
+**Keep the method; it is the cheapest way to settle this class of question, and
+it comes calibrated.** In the same campaign a PE sharing its core with a GPU
+helper thread showed **2.7 SECONDS** of runqueue wait against 0.0 ms for the
+same PE unshared. So a real placement problem is three to four orders of
+magnitude above the noise. If schedstat says tenths of a percent, the placement
+is not your problem and no amount of pemap tuning will help.
+
+### Two things that will waste a day if you do not know them
+
+- **`+lci_ndevices` x `+backend_poll_thread` must equal ppn**, or the run hangs
+  at cache-manager initialisation. `+backend_poll_thread` is a poller-per-device
+  divisor, not an on/off switch (0 clamps to 1), and ndevices is capped near 7
+  per process — 112 domains on a node fails memory registration.
+- **Resolution limits are large, so do not chase small pemap deltas.** Across
+  allocations this campaign could not resolve better than about 4%. At 128
+  nodes, two runs of IDENTICAL code differed by 68.8 ms, which is the
+  single-rep noise floor there. At 16 nodes n=1 is about +/-16 ms (0.6%). At
+  ppn 14 the spread reaches ~700 ms on a 5.5 s wall. Interleave reps, discard a
+  warm-up arm, and compare only within one allocation.
+
+### On carrying the packed-map result forward
+
+The one-node observation above — 8 PEs packed onto adjacent logical PUs beating
+the auto-spread on a ring benchmark — is consistent with everything here and
+should still not be generalised. A ring is latency-bound and wants neighbours
+close; the tree walk is compute- and fetch-bound and wants physical cores and a
+free sibling for the GPU helper. Those pull in opposite directions, which is
+exactly why that section calls it an observation and not a map.
+
 ## Verified 2026-08-12 (first hands-on day, via the on-machine Claude)
 
 - Single-node runs need `srun --network=single_node_vni`; `job_vni`
