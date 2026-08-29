@@ -664,34 +664,61 @@ reconverse/LCI.
   the "passes" were not testing what they claimed. Both directions of error
   were in the harness.
 
-## A CkCallback delivered with a null message cannot target an entry method that takes parameters (2026-08-29, Frontier)
+## A CkCallback's delivered message must match its target entry method's signature -- nothing checks this (2026-08-29, Frontier)
 
-`hapiAddCallback(stream, cb)` forwards to `hapiAddCallback(stream, cb,
-nullptr)` and the runtime later does `hev.cb.send(hev.cb_msg)` with that
-null. Aim such a callback at an entry method declared with a parameter --
-`entry void done(int tag);` -- and the completion NEVER ARRIVES. No error, no
-warning, no abort: the PE simply waits forever. Point it at a parameterless
-`entry void done();` and it works.
+`CkCallback(CkIndex_X::meth(args), proxy)` looks like a typed pairing. It is
+not. The generated helper is
 
-Cost when it bites: a test whose PE was deliberately kept busy with self-sent
-entry methods spun until the job's wall, and the obvious reading -- "the
-scheduler is too busy to poll for GPU completions" -- was wrong. The poller
-was fine (`CcdRaiseCondition(CcdSCHEDLOOP)` is at the top of every scheduler
-iteration); the callback was simply undeliverable. Nearly filed as a runtime
-defect.
+    static int meth(int tag) { return idx_meth_marshallN(); }
 
-Rules that follow:
-- Any callback the runtime may deliver with a null message -- GPU completion
-  callbacks, library completion callbacks, anything documented as "send with
-  no data" -- must target a parameterless entry method, or one taking a
-  message it will actually be given. Carry state in a member, not a
-  parameter.
-- The neighbouring targets in the same program all worked because they
-  happened to be parameterless. Uniformity is not evidence; check the
-  declaration of the one that fails.
+-- the arguments are **ignored**. They exist only to pick an overload, so for
+polymorphic entry methods they select WHICH entry you get, and that is all
+they do. Nothing anywhere checks that the message the callback eventually
+carries matches what the chosen entry will try to unpack. The mismatch
+compiles cleanly.
+
+The two halves must be reasoned about separately:
+
+- **Selection.** With overloaded entry methods the dummy arguments choose the
+  overload. Get their types wrong and you silently register a callback to a
+  different method than you meant.
+- **Delivery.** Whatever the caller eventually sends must be what the
+  selected entry unpacks. A marshalled entry (`entry void done(int tag);`)
+  expects a `CkMarshallMsg` whose buffer holds the packed parameters; a
+  message entry expects that message type; a parameterless entry expects
+  nothing.
+
+A null is one case of a delivery mismatch, and NOT a benign one: `send(NULL)`
+does not skip the send, it substitutes an empty system message
+(`ckcallback.C`, `if (!msg) msg=CkAllocSysMsg()`). A marshalled entry then
+casts that to `CkMarshallMsg*` and PUPs parameters out of a buffer that never
+held them. That is undefined behaviour, and what it does in practice is not
+worth predicting.
+
+This matters for any API documented as delivering a callback with no data.
+`hapiAddCallback(stream, cb)` is one: it forwards `cb_msg = nullptr` and the
+runtime later does `cb.send(nullptr)`. Point such a callback at
+`entry void done(int tag);` and the pairing is wrong even though it compiles.
+
+Observed cost (Frontier, 2026-08-29): a GPU completion callback aimed at a
+marshalled entry, every PE waiting on it, and the phase never finished --
+the job ran to its wall with no crash and no error. Retargeting the same
+callback at a parameterless `entry void done();` and carrying the tag in a
+member fixed it. The mechanism by which the mismatched delivery failed was
+NOT established -- only that the pairing was invalid and the symptom went
+away. Do not read a specific failure mode into it; read the rule.
+
+Rules:
+- For any callback the runtime may deliver with no data, target a
+  parameterless entry method and carry state in a member.
+- The obvious wrong diagnosis is attractive and should be checked. Here the
+  natural reading was "the PE is too busy to poll for completions", since the
+  PE was deliberately saturated with entry methods. That was wrong --
+  `CcdRaiseCondition(CcdSCHEDLOOP)` runs at the top of every scheduler
+  iteration -- and chasing it would have produced a bogus runtime bug report.
 - Bound any "keep working until the callback arrives" loop and report on the
-  cap. A test that hangs tells you far less than one that says which
-  completion never came.
+  cap. A test that hangs tells you far less than one that names the
+  completion that never came.
 
 ## An unchecked error return in a completion path becomes "completed immediately" (2026-08-29, Frontier, 8x MI250X)
 
