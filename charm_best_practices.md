@@ -1073,7 +1073,7 @@ with `-Wl,--disable-new-dtags` (forces RPATH, which wins) and gate the
 job script on `ldd` showing the intended .so before trusting any A/B.
 
 **GPU helper threads inherit the pinned PE's affinity mask — a class of
-bug, not a one-off (Frontier, 2026-08-20, -22% at 2B/896 PEs).** ROCm
+bug, not a one-off (Frontier, 2026-08-20; -22% at 896 PEs, -63% at 7168).** ROCm
 (and in general any lazily-initialized runtime) creates helper threads
 from whichever thread first calls it; pthread_create hands the child
 the CREATOR'S affinity mask. Under +pemap that creator is a PE pinned
@@ -1088,6 +1088,24 @@ helpers inherit the wide mask, PEs keep their cores
 that pinned it: an LD_PRELOAD interposer on pthread_create logging
 creator affinity + backtrace, and per-thread runqueue-wait from
 /proc/<tid>/schedstat.
+
+  **It gets worse with scale, and it is a FIXED-SIZE tax rather than a
+  proportional one.** The same fix measured -22% at 896 PEs and -63% at
+  7168 PEs, ranges fully separated. Per-phase, the damage is spread across
+  every phase of the iteration, and the SHORT phases suffer worst as
+  multiples -- a 5 ms gather phase went 21x, the union-find 9x, while the
+  treewalk, by far the longest phase, went only 1.5x. That is the signature
+  of a stolen scheduler slice rather than a slowdown: a fixed stall costs a
+  short phase everything and a long phase relatively little. So the damage
+  grows with the number of short phases and synchronisation points, which is
+  why a small-scale measurement badly understates it, and why the expectation
+  that it "bites the treewalk" is the wrong summary -- the walk is the phase
+  that suffers LEAST per unit of time spent in it.
+
+  **A quiescence settle is a symptom of this.** See
+  `reconverse-qd-latency.md`, addendum and resolution: QD rounds are
+  machine-wide, so each round absorbs one stolen slice, which looks exactly
+  like fabric latency and is not.
 
 **Reading Projections traces programmatically — two traps that
 published false results before being written down:** (1) BEGIN_IDLE/

@@ -243,7 +243,7 @@ change.
 
 Measured in the paratreet2/FoF3 2B campaign, job 5310158, two independent
 traced reps of the same binary at 896 PEs (128 processes x ppn 7, +ndev 4,
-+backend_poll_thread 2).  Full analysis: `~/software/reports/relay37.txt`.
++backend_poll_thread 2).
 
 - SEVEN QD episodes per run.  SIX settle for 53-81 ms with the machine
   already completely quiet: 438.8 ms (rep 2) and 368.4 ms (rep 1) of pure
@@ -255,7 +255,8 @@ traced reps of the same binary at 896 PEs (128 processes x ppn 7, +ndev 4,
   cost is entirely on the UPWARD child->parent report leg.  Method: bin
   END_IDLE(15) records — QdMsg handlers are Converse handlers and emit no
   entry events, but every QD message that lands makes a PE leave the idle
-  loop.  Tool: `~/software/scripts/relay40-wakeups.py`.
+  loop -- so binning END_IDLE by time reconstructs the round structure that
+  the trace does not record directly.
 - ROUNDS ARE FASTER ON A BUSY MACHINE.  In the one episode where the machine
   is 90% busy throughout, rounds are 13 ms apart and onQD lands 0.5 ms after
   the last piece of work.  QD is free when there is work to overlap it; the
@@ -266,15 +267,14 @@ idle path) DOES NOT CARRY OVER TO FRONTIER:
 
 - The matched control exists and is clean.  `tests/charm++/qd/qdbench` at the
   SAME 896 PEs, the SAME 128 x ppn 7 layout, the SAME +lci_ndevices 4
-  +backend_poll_thread 2, on the same machine, settles in **0.45 ms** (job
-  5312377, `~/software/reports/relay31.txt`), with benign scaling from 224
-  PEs and no cliff in 16 runs.  The application is 150x slower with the same
-  protocol, same runtime, same knobs, same scale.
+  +backend_poll_thread 2, on the same machine, settles in **0.45 ms**, with
+  benign scaling from 224 PEs and no cliff in 16 runs.  The application is
+  150x slower with the same protocol, same runtime, same knobs, same scale.
 - The Frontier idle-stall test was negative independently: 0 of 160,000
   samples over 1 ms.  Slingshot/CXI does not show the InfiniBand behaviour.
-- FOF_QD_NOIDLE is a wash, not a fix: it removes the idle gate but multiplies
-  QD rounds by 8, and application wall time did not move (5138 vs 5246 ms,
-  inside repeatability).  `~/software/reports/relay30.txt`.
+- Disabling the idle gate is a wash, not a fix: it removes the gate but
+  multiplies QD rounds by 8, and application wall time did not move
+  (5138 vs 5246 ms, inside repeatability).
 
 So on Frontier the inflation is a property of the APPLICATION'S STATE, not of
 the fabric and not of PE count.  qdbench has no GPU work, no registered device
@@ -292,3 +292,24 @@ quiescence purely to let the canopy re-sends to `Driver::recvTC` settle, and
 `src/Driver.h:332` posts a second CkWaitQD immediately afterwards.  The
 re-send count is knowable in TreePiece::upwardPass.  Those two waits are
 ~150 ms of the ~196 ms that the 8.10-8.30 s region of the trace costs.
+
+### RESOLVED (2026-08-24): it was the GPU runtime's helper threads
+
+The experiment proposed above was effectively run, and the answer is in
+`charm_best_practices.md` under "GPU helper threads inherit the pinned PE's
+affinity mask". qdbench differs from the application in exactly the way that
+mattered: it makes no GPU calls.
+
+The mechanism accounts for the shape of everything above. A helper thread born
+with a worker PE's single-core affinity timeslices against a PE that spins when
+idle, so the victim loses the core in whole scheduler slices. QD is a sequence
+of machine-wide rounds, and a round cannot finish until its slowest reporter
+reports, so each round can absorb one slice. That is why the settles are
+quantised at tens of ms, why they appear only at QUIET phase boundaries (a busy
+machine has other work to overlap the stolen slice), and why the idle gate
+itself was never the cost -- the gate is microseconds.
+
+So the correction to this note is not that the measurements were wrong, but
+that the cause is above the transport entirely. **Before attributing a QD
+settle to the fabric, check whether anything in the process creates threads
+from a pinned PE.** The fix is affinity placement, not a runtime change.
