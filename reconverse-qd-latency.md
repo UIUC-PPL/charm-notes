@@ -237,3 +237,58 @@ tree depth) x (sparse-message latency) = 3 x 2 x 12.7 ms ~= 76-130 ms,
 matching every observed settle. Fix the sparse-message idle-path
 latency and QD collapses to milliseconds; nothing in charm needs to
 change.
+
+## Addendum (2026-08-20): FRONTIER / Slingshot-CXI, 896 PEs — the same
+## 60-80 ms settles, but the transport explanation above does NOT fit
+
+Measured in the paratreet2/FoF3 2B campaign, job 5310158, two independent
+traced reps of the same binary at 896 PEs (128 processes x ppn 7, +ndev 4,
++backend_poll_thread 2).  Full analysis: `~/software/reports/relay37.txt`.
+
+- SEVEN QD episodes per run.  SIX settle for 53-81 ms with the machine
+  already completely quiet: 438.8 ms (rep 2) and 368.4 ms (rep 1) of pure
+  QD wall time, 8-10% of the measured window and ~22% of ALL the idle time
+  in it.
+- The round anatomy is the Anvil anatomy with a smaller constant: 3-4
+  machine-wide wakeup waves, 12-29 ms apart (typically ~21), then onQD.  The
+  downward broadcast leg lands on all 896 PEs inside one 0.5 ms bin, so the
+  cost is entirely on the UPWARD child->parent report leg.  Method: bin
+  END_IDLE(15) records — QdMsg handlers are Converse handlers and emit no
+  entry events, but every QD message that lands makes a PE leave the idle
+  loop.  Tool: `~/software/scripts/relay40-wakeups.py`.
+- ROUNDS ARE FASTER ON A BUSY MACHINE.  In the one episode where the machine
+  is 90% busy throughout, rounds are 13 ms apart and onQD lands 0.5 ms after
+  the last piece of work.  QD is free when there is work to overlap it; the
+  cost appears only at a quiet phase boundary.
+
+WHY THE 2026-07-30 ATTRIBUTION (sparse cross-process message latency on the
+idle path) DOES NOT CARRY OVER TO FRONTIER:
+
+- The matched control exists and is clean.  `tests/charm++/qd/qdbench` at the
+  SAME 896 PEs, the SAME 128 x ppn 7 layout, the SAME +lci_ndevices 4
+  +backend_poll_thread 2, on the same machine, settles in **0.45 ms** (job
+  5312377, `~/software/reports/relay31.txt`), with benign scaling from 224
+  PEs and no cliff in 16 runs.  The application is 150x slower with the same
+  protocol, same runtime, same knobs, same scale.
+- The Frontier idle-stall test was negative independently: 0 of 160,000
+  samples over 1 ms.  Slingshot/CXI does not show the InfiniBand behaviour.
+- FOF_QD_NOIDLE is a wash, not a fix: it removes the idle gate but multiplies
+  QD rounds by 8, and application wall time did not move (5138 vs 5246 ms,
+  inside repeatability).  `~/software/reports/relay30.txt`.
+
+So on Frontier the inflation is a property of the APPLICATION'S STATE, not of
+the fabric and not of PE count.  qdbench has no GPU work, no registered device
+memory and a tiny footprint; the application has all three.  THE NEXT
+EXPERIMENT is therefore a qdbench variant that adds a large registered/device
+allocation and an outstanding GPU stream, and nothing else.  If settle jumps
+from 0.45 ms to tens of ms, the reconverse/LCI issue can be written precisely
+against the progress path under registration or device polling.  If it stays
+flat, instrument the upward report leg per tree level in qd.C and run it
+inside the application.
+
+Application-side workaround, unchanged in spirit from the section above and
+now concrete for paratreet2: `examples/fof3/FoF3.C:127` waits for global
+quiescence purely to let the canopy re-sends to `Driver::recvTC` settle, and
+`src/Driver.h:332` posts a second CkWaitQD immediately afterwards.  The
+re-send count is knowable in TreePiece::upwardPass.  Those two waits are
+~150 ms of the ~196 ms that the 8.10-8.30 s region of the trace costs.
