@@ -664,6 +664,62 @@ reconverse/LCI.
   the "passes" were not testing what they claimed. Both directions of error
   were in the harness.
 
+## A CkCallback delivered with a null message cannot target an entry method that takes parameters (2026-08-29, Frontier)
+
+`hapiAddCallback(stream, cb)` forwards to `hapiAddCallback(stream, cb,
+nullptr)` and the runtime later does `hev.cb.send(hev.cb_msg)` with that
+null. Aim such a callback at an entry method declared with a parameter --
+`entry void done(int tag);` -- and the completion NEVER ARRIVES. No error, no
+warning, no abort: the PE simply waits forever. Point it at a parameterless
+`entry void done();` and it works.
+
+Cost when it bites: a test whose PE was deliberately kept busy with self-sent
+entry methods spun until the job's wall, and the obvious reading -- "the
+scheduler is too busy to poll for GPU completions" -- was wrong. The poller
+was fine (`CcdRaiseCondition(CcdSCHEDLOOP)` is at the top of every scheduler
+iteration); the callback was simply undeliverable. Nearly filed as a runtime
+defect.
+
+Rules that follow:
+- Any callback the runtime may deliver with a null message -- GPU completion
+  callbacks, library completion callbacks, anything documented as "send with
+  no data" -- must target a parameterless entry method, or one taking a
+  message it will actually be given. Carry state in a member, not a
+  parameter.
+- The neighbouring targets in the same program all worked because they
+  happened to be parameterless. Uniformity is not evidence; check the
+  declaration of the one that fails.
+- Bound any "keep working until the callback arrives" loop and report on the
+  cap. A test that hangs tells you far less than one that says which
+  completion never came.
+
+## An unchecked error return in a completion path becomes "completed immediately" (2026-08-29, Frontier, 8x MI250X)
+
+Found while reviewing a GPU series, but the shape is general and worth having
+outside GPU code. A completion mechanism built as "record an event, poll it,
+fire the callback when the query says done" fails OPEN when the record fails:
+a query on an event that was never recorded reports success, so the callback
+fires at once and the work is reported finished before it started.
+
+In the case at hand the record failed with `invalid resource handle` on 7 of
+8 PEs and its return value was discarded at the call site. Symptom: the
+completion callback arrived a full kernel duration early, and the buffer it
+was meant to announce still held its pre-filled sentinel.
+
+- Check the return of the call that ARMS a completion, not only the calls
+  that do work. An unchecked arm turns into a silent, instant, wrong
+  completion.
+- Correctness tests cannot find this class of bug if their work is
+  instantaneous. A callback delivered immediately still finds correct data
+  when the kernel finished before the callback was scheduled. The unit of
+  work has to outlast the detection path before the ordering is even
+  observable -- so a completion test needs a duration knob, and a buffer
+  pre-filled with a sentinel so "not yet written" is distinguishable from
+  "written correctly".
+- Report the measurement that collapses. Here the same 8 units of work
+  summed to 400 ms measured through a correct completion path and 22 ms
+  through the broken one; that ratio is far easier to act on than a pass/fail.
+
 ## Reading Projections traces: black regions, flush hygiene (2026-07-26)
 
 - Time-profile BLACK = time attributed to neither entries nor idle:
