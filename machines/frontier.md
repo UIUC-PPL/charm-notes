@@ -79,6 +79,8 @@ HWLOC TRAP (silent): reconverse's FindHWLOC has a broken environment
 fallback, so a build can SUCCEED with all CPU affinity compiled out
 (+setcpuaffinity not even parsed). Keep the gate: after the build,
 `grep RECONVERSE_ENABLE_CPU_AFFINITY <build>/CMakeCache.txt` — must be ON.
+That gate is only half the job: the capability still has to be ASKED for at
+run time. See "CPU affinity at run time" below for the flags.
 
 CORRECTED 2026-08-29 (this section previously prescribed a remedy that
 breaks the build; both halves of it were wrong).
@@ -139,6 +141,83 @@ for the fof labeling A/B: paratreet2 design/frontier-labeling-ab.md —
 adapt the srun line verbatim from Ritvik's recorded command
 (cray_shasta, job_vni, pemap, +lci_ndevices 7 = his min(8, ppn/2)
 setting on Slingshot, CXI env vars).
+
+## CPU affinity at run time — the flags, and the OS-index trap (2026-08-29)
+
+This file gated the BUILD-time affinity capability
+(RECONVERSE_ENABLE_CPU_AFFINITY must be ON) and then never said how to ask
+for affinity at RUN time, so every run made here printed
+`Charm++> cpu affinity NOT enabled.` with the capability compiled in and
+simply unused. Affinity should be ON for any run whose numbers you intend
+to quote. It is not needed for correctness — every test here passes either
+way — but an unpinned run is not a reproducible one.
+
+reconverse parses exactly three flags (`src/cpuaffinity.cpp`): `+setcpuaffinity`,
+`+pemap`, `+showcpuaffinity`. There is NO `+commap` — reconverse has no
+communication threads. All of the below verified on Frontier, one node,
+reconverse f3f4110, 2026-08-29.
+
+### Use `+setcpuaffinity` by default
+
+It spreads PEs evenly over whatever the job's cpuset actually contains, so it
+adapts to the launch shape instead of assuming one. Add `+showcpuaffinity` to
+see the result:
+
+    Charm++> cpu affinity enabled.
+    Charm++> set PE 0 on node 0 to PU L#0    PE 4 -> L#56
+    Charm++> set PE 1 on node 0 to PU L#14   PE 5 -> L#70
+    Charm++> set PE 2 on node 0 to PU L#28   PE 6 -> L#84
+    Charm++> set PE 3 on node 0 to PU L#42   PE 7 -> L#98
+
+(8 PEs over a 112-PU cpuset: stride 112/8 = 14.)
+
+### `+pemap`: use LOGICAL indices (`L` prefix), not bare OS indices
+
+`+pemap` implies `+setcpuaffinity` (the parser sets the flag when a map is
+given), and accepts both range and comma-list syntax. The prefix is what
+matters:
+
+    +pemap L0-7                 works — "PE-core map (logical indices): 0-7"
+    +pemap L0,2,4,6,8,10,12,14  works — PE i lands on L#2i
+    +pemap 1-7                  works — "PE-core map (OS indices): 1-7"
+    +pemap 1-8                  ABORTS (core dumped)
+    +pemap 0                    ABORTS
+    +pemap 8                    ABORTS
+
+THE TRAP: a Frontier job's cpuset EXCLUDES the 8 reserved cores. Observed
+inside a job step:
+
+    Cpus_allowed_list: 1-7,9-15,17-23,25-31,33-39,41-47,49-55,57-63
+
+so OS indices 0, 8, 16, 24, 32, 40, 48, 56 are absent. A bare OS index that
+is not in the cpuset makes `CmiSetCPUAffinity` resolve
+`hwloc_get_pu_obj_by_os_index` to nullptr, and the caller aborts the run.
+Any contiguous OS-index map that crosses a multiple of 8 therefore dies.
+Logical indices cannot hit this: `CmiSetCPUAffinityLogical` indexes the PU
+list positionally (`core % thread_unitcount`), so it always lands inside the
+cpuset.
+
+Do not hardcode a PU count either. Two job steps in the same job reported
+different cpuset sizes (112 PUs and 56) depending on the srun options used,
+so derive any explicit map at run time — `grep Cpus_allowed_list
+/proc/self/status`, or `hwloc-ls --restrict binding -p --only pu` — rather
+than assuming. `+setcpuaffinity` alone sidesteps the whole question, which
+is why it is the default recommendation.
+
+### One measured observation, NOT a recommended map
+
+On qdbench (a ring benchmark), 8 PEs packed onto adjacent logical PUs beat
+the auto-spread, consistently across all 10 phases:
+
+    +setcpuaffinity (auto, PE i -> L#14i)   ring 1.28-1.30 ms, settle 0.025, compute ~11.07
+    +pemap L0-7     (packed)                ring 1.07-1.08 ms, settle 0.022, compute ~10.29
+
+Packing favours a ring, and adjacent logical PUs may be SMT siblings, which
+would hurt compute-bound work. Do not carry this to another application
+without measuring it there — the launch-shape section below is explicit that
+shape results do not travel outside their operating point. Choosing a real
+Frontier map means pairing PEs with each GCD's NUMA domain, which is a
+measurement job, not a default.
 
 ## Verified 2026-08-12 (first hands-on day, via the on-machine Claude)
 
