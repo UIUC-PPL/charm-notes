@@ -75,14 +75,33 @@ etiquette):
     ./build charm++ reconverse-linux-x86_64 \
         --with-fetch-reconverse-dir=$PWD/reconverse --with-production -j8
 
-HWLOC TRAP (silent): reconverse's FindHWLOC only works reliably when
-HWLOC_ROOT_DIR is passed; its ENV fallback is broken. Without it the
-build SUCCEEDS but all CPU affinity is compiled out (+setcpuaffinity
-not even parsed). After the build, check
-`grep RECONVERSE_ENABLE_CPU_AFFINITY reconverse-linux-x86_64/CMakeCache.txt`
-— must be ON; if OFF, re-run the build command with
-`-DHWLOC_ROOT_DIR=$OLCF_HWLOC_ROOT` appended (OLCF modules export
-OLCF_<pkg>_ROOT).
+HWLOC TRAP (silent): reconverse's FindHWLOC has a broken environment
+fallback, so a build can SUCCEED with all CPU affinity compiled out
+(+setcpuaffinity not even parsed). Keep the gate: after the build,
+`grep RECONVERSE_ENABLE_CPU_AFFINITY <build>/CMakeCache.txt` — must be ON.
+
+CORRECTED 2026-08-29 (this section previously prescribed a remedy that
+breaks the build; both halves of it were wrong).
+
+- The remedy is NOT `-DHWLOC_ROOT_DIR=$OLCF_HWLOC_ROOT` appended to the
+  build command. buildcmake's arg parser has a catch-all that turns any
+  unrecognised argument into a COMPILER flag, so the flag never reaches
+  cmake; the build then dies at ~39% with charmc reporting
+  "-DHWLOC_ROOT_DIR=... -optimize -production: file not recognized: File
+  truncated" on every .ci file. The supported spelling is
+  `--with-cmake-args="-DHWLOC_ROOT_DIR=$OLCF_HWLOC_ROOT"` (OLCF modules
+  export OLCF_<pkg>_ROOT). See the same rule in
+  charm_best_practices.md, "Build-system notes".
+- The trap does not actually fire on Frontier, so the remedy has never
+  been needed here. FindHWLOC's fallback reads $ENV{HWLOC} — not
+  HWLOC_ROOT_DIR — and its guard is written `if(NOT HWLOC_ROOT_DIR AND
+  ENV{HWLOC})`, missing the `$`, so CMake evaluates a plain false string
+  and the fallback never runs at all. Affinity comes on anyway because
+  the unguarded `find_path(HWLOC_INCLUDE_DIR hwloc.h)` finds the loaded
+  hwloc module. Two builds on this machine confirm it: both show
+  RECONVERSE_ENABLE_CPU_AFFINITY:BOOL=ON with HWLOC_ROOT_DIR never passed
+  to cmake. Pass it properly anyway — the ON is luck of the module
+  environment, which is exactly why the gate stays.
 
 Runtime env (tcsh — Kale uses tcsh on Frontier; guard the unset case):
 

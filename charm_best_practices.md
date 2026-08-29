@@ -165,6 +165,18 @@ runtime-level work.
   and LCI, you must use the `--with-cmake-args` option in the build script;
   otherwise the arg parser in buildcmake will swallow the argument and turn
   it into a compiler flag.
+  The failure signature is worth knowing, because it names neither the flag
+  nor CMake (Frontier, 2026-08-29, `-DHWLOC_ROOT_DIR=` passed bare): the
+  build configures and compiles happily to ~39%, then every `.ci`
+  translation dies with
+
+      Fatal Error by charmc in directory <build>/include
+          -D<VAR>=<value> -optimize -production: file not recognized: File truncated
+
+  charmc is being handed the flag as if it were an object file. Confirm on
+  the artifact rather than the command line: `grep ^EXTRA_OPTS:
+  <build>/CMakeCache.txt` shows the swallowed flag, and a correctly passed
+  one appears as its own `<VAR>:` cache entry instead.
 - Run idiom: `lcrun -n <procs> env DYLD_LIBRARY_PATH=<charm>/lib ./app
   +pe <total PEs> <args>`. `+pe` is total across processes. Single-process
   runs don't need lcrun.
