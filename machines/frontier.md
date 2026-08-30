@@ -144,6 +144,8 @@ setting on Slingshot, CXI env vars).
 
 ## CPU affinity at run time — the flags, and the OS-index trap (2026-08-29)
 
+(READ THE MULTI-PROCESS NOTE FIRST -- the advice below is single-process.)
+
 This file gated the BUILD-time affinity capability
 (RECONVERSE_ENABLE_CPU_AFFINITY must be ON) and then never said how to ask
 for affinity at RUN time, so every run made here printed
@@ -157,7 +159,46 @@ reconverse parses exactly three flags (`src/cpuaffinity.cpp`): `+setcpuaffinity`
 communication threads. All of the below verified on Frontier, one node,
 reconverse f3f4110, 2026-08-29.
 
-### Use `+setcpuaffinity` by default
+### MULTI-PROCESS FIRST: do NOT pass `+setcpuaffinity` (corrected 2026-08-29)
+
+The rest of this section was written from single-process runs and is right
+only there. With one process per GPU -- the supported GPU configuration --
+`+setcpuaffinity` makes things WORSE, badly:
+
+    8 processes x 1 PE, srun -n8 -c7 --cpu-bind=cores, same binary, same node
+
+    with +setcpuaffinity       without it (Slurm binding only)
+      CPU chunk  19.00 ms        2.04 ms   (requested 2 ms)
+      CPU chunk  63.31 ms       40.39 ms   (requested 40 ms)
+      kernel     56-69 ms       50.00 ms   (requested 50 ms)
+      concurrency   6.71 x         8.00 x  (8 devices)
+      "WARNING: Multiple PEs assigned to same core"     no warning
+
+CPU work runs about 10x slow. The warning is telling the truth: with one PE
+per process, every process's auto-spread picks the first PU of the list it
+sees, and that list is evidently not restricted to the Slurm cpuset -- so all
+8 processes land on the same core. Slurm's own binding is already correct
+(verified: `--cpu-bind=cores` gives rank 0 `1-7,65-71`, rank 1 `9-15,73-79`,
+and so on, disjoint), so charm re-deriving affinity on top of it is both
+unnecessary and wrong.
+
+    srun -N1 -n8 -c7 --cpu-bind=cores ... ./app +pe 8      # no affinity flag
+
+Single-process runs are the case the rest of this section covers, and there
+`+setcpuaffinity` behaves as described below.
+
+### Multi-process launch also needs PMI_MAX_KVS_ENTRIES
+
+An 8-rank reconverse launch aborts before any application code runs:
+
+    _pmi2_add_kvs:ERROR: The KVS data segment of 30 entries is not large
+    enough.  Increase the number of KVS entries by setting env variable
+    PMI_MAX_KVS_ENTRIES to a higher value.
+
+`export PMI_MAX_KVS_ENTRIES=1000` clears it. The default 30 is not enough
+for 8 processes on a node.
+
+### Single process: use `+setcpuaffinity` by default
 
 It spreads PEs evenly over whatever the job's cpuset actually contains, so it
 adapts to the launch shape instead of assuming one. Add `+showcpuaffinity` to
