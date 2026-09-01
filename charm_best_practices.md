@@ -664,6 +664,53 @@ reconverse/LCI.
   the "passes" were not testing what they claimed. Both directions of error
   were in the harness.
 
+### GPU zerocopy: charm itself registers the device buffer per message, on both ends, and never releases it; same-node IPC is opt-in (2026-09-01, Frontier, 8x MI250X)
+
+The two entries above are about LCI's own per-message registration
+(rendezvous.hpp), which LCI does release when the operation completes and
+which `LCI_USE_REG_CACHE` removes. The device zerocopy path
+(`nocopydevice` parameters, `CkDeviceBuffer`) on the reviewed-with-reconverse
+line has a SEPARATE registration that neither of those facts covers:
+
+- Same-node transfers between processes take the shared-memory IPC path
+  ONLY with `+gpushm` on the command line (`hapi_impl.cpp`, `use_shm`).
+  Without it, `findTransferModeDevice` still says IPC, but the code falls
+  into the "inter-node" branch: the same-node transfer goes over the NIC as
+  an RDMA get. Symptom that gives it away: 1-node and 2-node zerocopy
+  numbers agree within a few percent. If you are measuring "GPU IPC" and
+  never passed `+gpushm`, you measured the fabric.
+- On that RDMA-get branch charm constructs a `CmiNcpyBuffer` for the source
+  (sender, `ckrdmadevice.C` sender routine) and for the destination
+  (receiver, before `rdmaGet`). The `CmiNcpyBuffer` constructor registers
+  immediately (`registerMem` -> `CmiSetRdmaBufferInfo` ->
+  `comm_backend::registerMemory` -> `fi_mr_regattr` with `FI_HMEM_ROCR`).
+  Nothing deregisters either one: the device completion handler
+  (`CkRdmaDeviceRecvHandler`) has no `CmiDeregisterMem` and sends no
+  dereg message, and the direct-API ack handler returns to it BEFORE the
+  host-path handlers that do deregister. Two NIC registrations per message,
+  forever.
+- Observed: an 8-process, one-node Jacobi with reused ghost buffers dies
+  4-7 s into the run at every decomposition tried (2 to 32 chares per GPU),
+  in `backend_ofi.cpp register_memory_impl` with ENOSPC from
+  `fi_mr_regattr` -- the NIC's registration table is full at roughly 1e5-2e5
+  registrations per process. Short runs (100 iterations) never see it, which
+  is why every published-style experiment passes.
+- The buffers were the SAME addresses every iteration (ghost buffers
+  allocated once per chare). Registering once per buffer for the buffer's
+  lifetime is the correct design; a registration cache would hit 100%.
+  `LCI_USE_REG_CACHE=ON` hides the crash (the cache returns the existing
+  entry instead of registering again) and removes the per-message cost for
+  reused buffers, but the charm-side leak is upstream of it: the refcount
+  still never drops. Fix belongs in charm (deregister on completion, or a
+  persistent registration on the `CkDeviceBuffer`), not in the cache.
+- Registration cost does not show in a HIP API trace (`rocprof
+  --hip-trace`): it is libfabric/CXI work on the PE thread. A device
+  zerocopy floor attributed entirely to HIP calls is missing this term.
+- Diagnosis hygiene: N ranks aborting with the default core pattern all
+  write `./core` in the run directory and the result is unreadable. Set
+  `ulimit -c 0` for sweeps, or a `%h.%p` core pattern when a backtrace is
+  wanted.
+
 ## A CkCallback's delivered message must match its target entry method's signature -- nothing checks this (2026-08-29, Frontier)
 
 `CkCallback(CkIndex_X::meth(args), proxy)` looks like a typed pairing. It is
