@@ -467,17 +467,23 @@ What this means in practice for the sessions run here:
 
 - Login-node use, tmux, job submission, builds, reading and writing files
   in the user's own areas: fine, and that is what every session here does.
-- The GitHub ssh key in ~/.ssh is exactly a long-lived, unscoped
-  credential. An agent session should NOT push with it. Two charm-notes
-  pushes on 2026-09-01 used it before this answer was read; recorded here
-  so it is not repeated. Options that fit the policy: Kale runs the push
-  himself in a shell (the agent writes the commit, he types `git push`);
-  or a fine-grained, expiring, single-repo token or deploy key created for
-  one task and revoked after it. Never a token pasted into a prompt, a
-  settings file, or the agent's memory directory.
+- The GitHub ssh key in ~/.ssh is a long-lived credential, and the agent
+  uses it when it pushes charm-notes. Kale's decision (2026-09-01, after
+  reading the answer): keep the current setup; he is the user responsible
+  and accepts it for these public repositories. If the policy tightens,
+  the alternatives are: Kale types `git push` himself after the agent
+  commits, or a fine-grained, expiring, single-repo token created for one
+  task and revoked after it. Never a token pasted into a prompt, a settings
+  file, or the agent's memory directory.
 - No credentials of any kind in ~/.claude, CLAUDE.md, or the memory files.
-- The PI of csc710 should know the agent reads project data under
-  /ccs/proj/csc710 and /lustre/orion/csc710 (inputs and job outputs).
+- PI awareness: Kale is the PI of csc710, so the "PI should be aware"
+  clause is satisfied by his running the sessions.
+- `gh` is installed at ~/.local/bin/gh (2.99.0, static binary, 2026-09-01;
+  ~/.cshrc already puts ~/.local/bin first on the path). It needs its own
+  token, which the agent must not create: Kale runs
+  `gh auth login --web -p ssh` once in his own shell (device code in a
+  browser); the token lands in ~/.config/gh/hosts.yml. Then the agent can
+  file issues and open PRs with `gh`, showing the text first.
 - Re-check this section against OLCF's current guidance before starting a
   new multi-week campaign; they said it will change.
 
