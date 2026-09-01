@@ -710,6 +710,16 @@ line has a SEPARATE registration that neither of those facts covers:
   write `./core` in the run directory and the result is unreadable. Set
   `ulimit -c 0` for sweeps, or a `%h.%p` core pattern when a backtrace is
   wanted.
+- Measured the same day, once `+gpushm` was passed (8 processes, one node,
+  same allocation as the no-flag arm): the IPC path was SLOWER than the
+  RDMA-get path at every decomposition, +46% at 2 chares per GPU falling
+  to +13% at 128, and slower than host staging too. Per message it does two
+  extra device-to-device copies and two extra events on the PE thread
+  (stage into the comm buffer, wait, copy out, record), against one
+  registration pair on the NIC path. Ghosts were 2-16 KB; large messages
+  untested. Do not assume same-node IPC beats the fabric; measure it, with
+  a long run as the branch proof (the IPC branch registers nothing, so it
+  survives an iteration count that kills the RDMA branch).
 
 ## A CkCallback's delivered message must match its target entry method's signature -- nothing checks this (2026-08-29, Frontier)
 
