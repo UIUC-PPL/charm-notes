@@ -142,6 +142,33 @@ adapt the srun line verbatim from Ritvik's recorded command
 (cray_shasta, job_vni, pemap, +lci_ndevices 7 = his min(8, ppn/2)
 setting on Slingshot, CXI env vars).
 
+### `module` does not exist in a batch script — source lmod first (2026-09-01)
+
+A `#!/bin/bash` sbatch script runs as a NON-LOGIN shell, and on Frontier the
+`module` shell function is only defined for login/interactive shells, so a
+bare `module load ...` in a batch script fails with `module: command not
+found` and the script keeps going. Observed cost: two jobs (1-node and
+2-node GPU sweeps) whose every srun step died in the loader on
+`libamdhip64.so.6` because the rocm module never extended LD_LIBRARY_PATH —
+Slurm reported both jobs COMPLETED, 8 s elapsed, zero data. Two fixes,
+use both:
+
+    source /opt/cray/pe/lmod/lmod/init/bash   # BEFORE any module load
+    module load PrgEnv-gnu hwloc rocm/6.2.4
+
+(the lmod tree is /opt/cray/pe/lmod/lmod — the generic
+/usr/share/lmod path does not exist here), and gate before the sweep loop
+rather than trusting the load:
+
+    if ldd $BENCH/app | grep -q 'not found'; then
+      echo "ABORT: unresolved shared libraries"; exit 1
+    fi
+
+The gate is what turns the next occurrence of this class of failure into a
+one-line abort instead of a full job of loader errors. `#!/bin/bash -l` is
+the other conventional fix but changes the whole environment; sourcing the
+init is the minimal one.
+
 ## CPU affinity at run time — the flags, and the OS-index trap (2026-08-29)
 
 (READ THE MULTI-PROCESS NOTE FIRST -- the advice below is single-process.)
