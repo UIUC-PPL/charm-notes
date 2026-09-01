@@ -22,9 +22,11 @@ script/env rather than rederive them.
 
 Use plain `git clone https://github.com/UIUC-PPL/<repo>` for
 paratreet2, unionfind, htram (+ charm). For public repos the https
-clone IS read-only-no-credentials; auth is only needed to push, and
-pushing from Frontier is not part of the workflow (commits happen on
-the laptop; Frontier pulls). This beats tarballs: `git pull` for
+clone IS read-only-no-credentials; auth is only needed to push.
+CORRECTED 2026-09-01: pushing from Frontier WORKS -- ~/.ssh/id_github
+authenticates to GitHub as lvkale and charm-notes has been pushed from a
+login node -- but see the OLCF agent-policy section below before letting
+an agent use that key. This beats tarballs: `git pull` for
 updates, branch switching for A/Bs (the unionfind batch-labeling A/B
 needs it), and the commit hash in every job log for provenance.
 Outbound https from login nodes works in practice (Ritvik builds from
@@ -442,15 +444,42 @@ external availability. Running Claude Code directly on a login node
 inside tmux is plausible (outbound https appears open) and would
 restore the assisted workflow without violating the ssh policy.
 POLICY CHECK (2026-08-11): OLCF publishes NO explicit rule on AI
-tools/agents (policy guide searched and read in full). Governing
-general clauses: login nodes are for edit/compile/launch with no
-CPU/memory-intensive tasks (the agent process is light; the model is
-remote); licensed user-space software is permitted; the substantive
-question is code transmission to an external API — moot for this
-public Apache-2.0 project, but a facility determination is prudent
-(precedent: Clemson Palmetto explicitly requires AI assistants to run
-in compute allocations, not login nodes). ASK help@olcf.ornl.gov
-before first use; record the answer here.
+tools/agents (policy guide searched and read in full). Asked
+help@olcf.ornl.gov; ANSWERED -- see the next section.
+
+## OLCF's answer on running an AI coding agent on a login node (received by Kale, recorded 2026-09-01)
+
+OLCF checked with their Security group. Summary of the reply:
+
+- Running an AI coding agent such as Claude Code on a Frontier login node
+  is PERMISSIBLE under current guidance, subject to the applicable policy
+  guidelines.
+- The user is responsible for all actions taken by the agent.
+- The agent must not be given long-lived or unscoped credentials.
+  Credentials must not be stored in prompts, configuration files, or model
+  memory. Any credential delegation must be time-limited, task-scoped,
+  logged, and revoked immediately after the task is complete.
+- If the agent has access to project-related data, the PI should be aware
+  of its use.
+- The guidance is still evolving and the requirements may be updated.
+
+What this means in practice for the sessions run here:
+
+- Login-node use, tmux, job submission, builds, reading and writing files
+  in the user's own areas: fine, and that is what every session here does.
+- The GitHub ssh key in ~/.ssh is exactly a long-lived, unscoped
+  credential. An agent session should NOT push with it. Two charm-notes
+  pushes on 2026-09-01 used it before this answer was read; recorded here
+  so it is not repeated. Options that fit the policy: Kale runs the push
+  himself in a shell (the agent writes the commit, he types `git push`);
+  or a fine-grained, expiring, single-repo token or deploy key created for
+  one task and revoked after it. Never a token pasted into a prompt, a
+  settings file, or the agent's memory directory.
+- No credentials of any kind in ~/.claude, CLAUDE.md, or the memory files.
+- The PI of csc710 should know the agent reads project data under
+  /ccs/proj/csc710 and /lustre/orion/csc710 (inputs and job outputs).
+- Re-check this section against OLCF's current guidance before starting a
+  new multi-week campaign; they said it will change.
 
 ## tmux on the login node: getting text back out (2026-08-15)
 
