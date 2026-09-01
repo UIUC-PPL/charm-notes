@@ -1920,3 +1920,46 @@ argument for now' -- and a conv-static dependency on the nonexistent
 reconverse target), but the deeper truth is the classic converse library
 build is COMMENTED OUT on the branch, so classic-from-branch needs
 restoration work that is better spent landing the branch on main.
+
+## A wait whose only wake-up has no sender: reconverse's 1-PE-per-node startup hang (2026-09-01)
+
+Two-node reconverse hung at startup on Anvil, before any application code
+ran. The shape that triggers it is the most natural multi-node launch
+there is: `srun --mpi=pmi2 -N2 -n2 ./app +pe 2` — one PE per node.
+
+The defect, in `reconverse/src/cpuaffinity.cpp`:
+
+    if (CmiMyPe() == 0)          { ...; cpuAffSyncWait(cpuPhyAffCheckDone); }
+    else if (CmiPhysicalNodeID(CmiMyPe()) == 0) { ...send to PE 0...; }
+
+PE 0 waits unconditionally; the only senders are PEs on physical node 0;
+and `cpuPhyAffCheckDone` is set in exactly one place, the receive
+handler. When physical node 0 holds one PE there are no senders, so the
+handler never runs and PE 0 spins forever. The handler's own test,
+`++count == CmiNumPesOnPhysicalNode(0) - 1`, is separately unreachable
+when that count is 1, since `++count` is never 0. Fix: only wait when a
+sender exists (`if (CmiNumPesOnPhysicalNode(0) > 1)`).
+
+Three transferable lessons:
+
+1. **A wait and its wake-up are one unit; review them together.** The
+   waiter's condition was `CmiNumPes() > 1` while the sender's was
+   `CmiPhysicalNodeID(pe) == 0`. Two different predicates guarding two
+   halves of one rendezvous is the bug pattern, and it is visible by
+   reading, without running anything. Grep for every write to the flag:
+   one write site reached only by a message is a standing hazard.
+2. **Backend-independence is a strong diagnostic.** Forcing `ofi` and
+   `ibv` produced identical hangs, which eliminated the transport in one
+   job and redirected the search from the network to startup code. Vary
+   the layer you suspect; if the symptom does not move, it is not there.
+3. **"Never validated" beats "regressed" as a first hypothesis when the
+   notes are silent.** The machine profile recorded no successful 2-node
+   run, and that absence was the clue — the configuration had never
+   worked, so nothing had to have broken.
+
+Also: a benchmark's own limits can masquerade as a failed prediction.
+Test runs came back non-zero and looked like a refutation; they were
+`pingpong` aborting with "Run this program on 1 or 2 processors only" at
+`+pe 4`, having already cleared the barrier under test. The tell was a
+banner line printed *after* the suspect call. Check what a nonzero exit
+actually says before scoring it against a hypothesis.

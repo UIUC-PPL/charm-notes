@@ -93,6 +93,43 @@ rebuild:
 `lcrun` is at `<build>/_deps/lci-src/lcrun`, not in `bin/` (`$LCRUN` in
 env.sh). On compute nodes prefer `srun --mpi=pmi2` over `lcrun`.
 
+### Multi-node: never launch with ONE PE per physical node (2026-09-01)
+
+Two-node reconverse hangs at startup — before any application code — if
+physical node 0 ends up holding exactly one PE. `srun --mpi=pmi2 -N2 -n2
+./app +pe 2` is the shape that triggers it. Nothing prints after
+`cpu topology info is gathered`, and the job dies on the walltime kill.
+
+It is NOT the network and NOT the launcher: `LCI_NETWORK_BACKENDS=ofi`
+and `=ibv` hang identically, and `--mpi=pmi2` is necessary (plain `srun`
+prints nothing at all) but not sufficient. Every rank is parked in
+`CmiCheckAffinity` -> `cpuAffSyncWait` (`reconverse/src/cpuaffinity.cpp`),
+spinning on a flag that is set only in `cpuPhyNodeAffinityRecvHandler`.
+The senders are exactly the PEs with `CmiPhysicalNodeID(pe) == 0`, so
+with one PE on physical node 0 nobody sends and the flag never flips.
+The run hangs synchronizing affinity it is not even using — the banner
+says `cpu affinity NOT enabled`.
+
+**Workaround, no patch needed** — give physical node 0 at least 2 PEs.
+Both verified passing on the unpatched build:
+
+    srun --mpi=pmi2 -N 2 -n 2 -c 2 ./app +pe 4    # 2 PEs per process
+    srun --mpi=pmi2 -N 2 -n 4      ./app +pe 4    # 2 processes per node
+
+**Real fix** — guard the wait so PE 0 only waits when a sender exists:
+
+    if (CmiNumPesOnPhysicalNode(0) > 1)
+      cpuAffSyncWait(cpuPhyAffCheckDone);
+
+Verified on Anvil: with the guard, `-N2 -n2 +pe 2` passes for both
+pingpong and megatest, and the >=2-PE shapes are unaffected. (Separately,
+the handler's `++count == CmiNumPesOnPhysicalNode(0) - 1` at line 198 is
+unreachable when that count is 1; the guard makes it moot.)
+
+This is why no successful 2-node run was recorded here before: every
+attempt used one PE per node. First working 2-node pingpong, patched:
+Groups roundtrip 13.07 us, NodeGroups 13.20 us, threaded Chares 14.55 us.
+
 ### tracedcharm — the Projections-enabled twin (built 2026-07-26)
 
 `recharm/tracedcharm/` is a second charm at the SAME commits (local clones of
