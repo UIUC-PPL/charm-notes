@@ -2020,3 +2020,75 @@ Test runs came back non-zero and looked like a refutation; they were
 `+pe 4`, having already cleared the barrier under test. The tell was a
 banner line printed *after* the suspect call. Check what a nonzero exit
 actually says before scoring it against a hypothesis.
+
+## A registration cache masks a missing deregister, and compiling it in has a build-wide cost (2026-09-01, Frontier, 8x MI250X, Slingshot)
+
+Observed on the reconverse device zerocopy path (charm's inter-node
+device-to-device receive, an RDMA get through LCI): both ends of every
+message were registered per message and never released -- the completion
+returned from the shared ack handler before the host path's deregistration,
+and the device handler had none of its own.  Three things worth carrying
+out of it:
+
+- **With LCI's registration cache OFF (its default), the leak is loud**:
+  `fi_mr_regattr` returns ENOSPC after roughly 1e5 registrations per rank
+  (an LCI assert in `register_memory_impl`, "No space left on device", every
+  rank at once, a few seconds into a run).  Short tests (100 iterations)
+  never reach it.  Run any zerocopy path for tens of thousands of messages
+  per rank once before calling it correct.
+- **With the cache ON, the same leak is silent**: every repeat registration
+  becomes a lookup, no new regions, no crash -- but every region is held at a
+  refcount that never returns to zero, cannot be evicted, and cannot be
+  invalidated when the buffer is freed or remapped, so a code that frees and
+  reallocates device buffers can be handed a stale region.  A quiet run on a
+  cache-enabled build is not evidence that deregistration exists.  Measure
+  the fix on a cache-OFF build, where the failure is visible.
+- **The fix is cheap**: release on completion -- the receiver deregisters its
+  destination in place, and sends the sender one small converse message
+  carrying the source pointer and its memory-region handle.  Nothing waits.
+  Cost 3-4 us per remote message, cache on or off: the cache's `put` was no
+  cheaper than `fi_close` on this fabric, so the cache buys nothing on the
+  release.
+- **The trap: compiling the cache in (`LCI_USE_REG_CACHE=ON`) cost 8-10% per
+  chare-iteration in EVERY configuration, 21% on the fastest protocol** --
+  including a single process that registered nothing and moved no data
+  through LCI, and including the cache-enabled build with the cache disabled
+  at run time (`LCI_ATTR_USE_REG_CACHE=OFF`).  So the cost is not the
+  lookup; it is the build.  That option links a UCX subset whose
+  registration cache works through process-wide memory hooks on allocation
+  and mapping calls, present whether or not any region is ever cached, and
+  the per-message allocation path is what appears to pay.  Mechanism inside
+  UCX not confirmed; the cost was measured three ways within one
+  allocation.  Before making any such option a default, compare the two
+  builds in one allocation and include a shape that never exercises the
+  feature -- that is the run that separates "the feature costs" from "the
+  build costs".
+- Discipline that made this cheap to establish: the runtime prints, on PE 0,
+  which behaviour is in force (released / NOT released), so every run states
+  its own arm instead of the job script implying it.
+
+## A "complete on enqueue" device receive must keep the quiescence bracket that hapiAddCallback provided (2026-09-01, Frontier)
+
+Measured on MI250X: completing an intra-node device receive as soon as its
+device-to-device copy is enqueued on the receiver's posted stream (instead
+of one `hapiAddCallback` per message) cut the per-chare-iteration cost of a
+stencil exchange by a third.  Two things it silently changed, found by
+reading the path, not by any test failing:
+
+- **QD coverage.**  `hapiAddCallback` ends in `QdCreate(1)` and the HAPI
+  poll does `QdProcess(1)` when the event completes; that is what stops
+  quiescence being detected while device copies are pending.  Delivering
+  the message without it lets QD complete with copies in flight; anything
+  that uses QD as a phase barrier and then reads, frees, or migrates those
+  buffers becomes a rare corruption, not a hang.  A plain `hipFree` is safe
+  (it synchronises the device); a pooled free (`hipFreeAsync`, HAPI's own
+  pool) is not.  The remedy that keeps the gain: one sentinel completion per
+  stream per scheduler pass, `QdProcess(n)` for the n messages delivered
+  ahead of it -- HAPI polls only the FIFO head anyway.
+- **Nested execution.**  `enqueueNcpyMessage` calls `CmiHandleMessage`
+  directly when the destination is the current PE, so completing inside
+  the receive-issue path runs the real entry method nested inside the
+  metadata message's generated stub.  It worked because the stub does
+  nothing after the call, but tracing brackets, current-object bookkeeping
+  and LB timers are not written for two handler levels.  Push the message
+  on the PE's queue instead; it costs one enqueue.
