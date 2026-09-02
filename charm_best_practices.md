@@ -2142,3 +2142,39 @@ memory region per process instead of eight per chare -- with no
 registration call in the application.  The pool owns the arena's
 lifetime, which is what makes the registration safe without allocator
 hooks; sweeping idle arenas belongs in idle or load-balancing time.
+
+## Chares per GPU: one stream per chare has no ceiling; two streams per chare grow, and 16 hardware queues collapse (2026-09-02, Frontier, MI250X, ROCm 6.2.4)
+
+Measured with per-chare work held fixed (block size) and the chare count
+per GCD grown from 1 to 32 by grid size, on a 2-D stencil with the cheap
+device protocol (zerocopy, registered buffers, piggybacked acks).  Per
+chare per GCD, us:
+
+    block 512:  1 stream (stream-ordered delivery)  59-63 flat, 1..32 chares
+                2 streams (comm + compute, events)  84 -> 131 (+50%)
+    block 2048: 1 stream  128 alone -> 106 at 32 (overlap)
+                2 streams 152 -> 156
+
+- **With one stream per chare the per-chare cost is flat to 32 chares per
+  device at every block size, with 4, 8 or 16 hardware queues**
+  (GPU_MAX_HW_QUEUES).  The device carries 32 chares at the cost of one;
+  where the device time dominates, about two thirds of a chare's issue
+  cost hides behind the other chares' kernels.
+- **Two streams per chare with cross-stream event ordering, the usual
+  comm-stream / compute-stream pattern, cost 24 us per chare more even
+  alone, and grow by half between 1 and 32 chares per device.**  The
+  growth is NOT a hardware-queue limit: the knee (4 chares per device, 8
+  streams) is identical with 4 and 8 queues, and 4 queues is marginally
+  better than 8 at 32 chares.  It is a runtime cost of cross-stream event
+  dependencies that rises with the number of streams in the process.
+- **GPU_MAX_HW_QUEUES=16 with two streams per chare and 32 or more streams
+  in the process is a 50x collapse** (6852 us per chare-iteration against
+  131), at every block size, and only in the two-stream arm.  Sixteen
+  exceeds what an MI250X GCD provides; the oversubscribed queues are
+  time-sliced by firmware, and an event wait on a descheduled queue
+  stalls for a slice.  Keep the default of 8; never raise it for
+  multi-stream chares.
+- The device-only reference (no exchange) is what to measure first: a
+  512^2 Jacobi chare issues its own kernels and copies in 26 us on one
+  stream; the exchange adds 33; the second stream adds 18-21 with no
+  exchange at all.
