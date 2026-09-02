@@ -2021,7 +2021,7 @@ Test runs came back non-zero and looked like a refutation; they were
 banner line printed *after* the suspect call. Check what a nonzero exit
 actually says before scoring it against a hypothesis.
 
-## A registration cache masks a missing deregister, and compiling it in has a build-wide cost (2026-09-01, Frontier, 8x MI250X, Slingshot)
+## A registration cache masks a missing deregister (2026-09-01, Frontier, 8x MI250X, Slingshot; cost claim retracted 2026-09-02)
 
 Observed on the reconverse device zerocopy path (charm's inter-node
 device-to-device receive, an RDMA get through LCI): both ends of every
@@ -2049,20 +2049,19 @@ out of it:
   Cost 3-4 us per remote message, cache on or off: the cache's `put` was no
   cheaper than `fi_close` on this fabric, so the cache buys nothing on the
   release.
-- **The trap: compiling the cache in (`LCI_USE_REG_CACHE=ON`) cost 8-10% per
-  chare-iteration in EVERY configuration, 21% on the fastest protocol** --
-  including a single process that registered nothing and moved no data
-  through LCI, and including the cache-enabled build with the cache disabled
-  at run time (`LCI_ATTR_USE_REG_CACHE=OFF`).  So the cost is not the
-  lookup; it is the build.  That option links a UCX subset whose
-  registration cache works through process-wide memory hooks on allocation
-  and mapping calls, present whether or not any region is ever cached, and
-  the per-message allocation path is what appears to pay.  Mechanism inside
-  UCX not confirmed; the cost was measured three ways within one
-  allocation.  Before making any such option a default, compare the two
-  builds in one allocation and include a shape that never exercises the
-  feature -- that is the run that separates "the feature costs" from "the
-  build costs".
+- **RETRACTED (2026-09-02): the first version of this entry claimed that
+  compiling the cache in cost 8-10% build-wide.**  That was a measurement
+  error: the cache-enabled benchmark binary had been compiled without -O3
+  (a `CHARMC=` override on the make line dropped the Makefile's `$(OPTS)`),
+  and the ldd gate that was applied cannot see that.  Re-measured with both
+  binaries at -O3 in one allocation: the cache is a small WIN, 2-3% at 8
+  processes and 4% on the fastest protocol, disabling it at run time
+  returns the cache-off numbers, and a single-process run that registers
+  nothing is identical across all three within 0.5%.  The method lesson
+  that replaces the retracted claim: **when comparing a newly built binary
+  against an existing one, gate the compile line and the text size, not
+  just the linked libraries.**  A binary whose host code is unoptimised
+  passes every library gate and produces a clean, repeatable, wrong 8%.
 - Discipline that made this cheap to establish: the runtime prints, on PE 0,
   which behaviour is in force (released / NOT released), so every run states
   its own arm instead of the job script implying it.
