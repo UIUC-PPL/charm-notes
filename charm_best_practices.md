@@ -2062,6 +2062,16 @@ out of it:
   against an existing one, gate the compile line and the text size, not
   just the linked libraries.**  A binary whose host code is unoptimised
   passes every library gate and produces a clean, repeatable, wrong 8%.
+- **Register once and keep the handle beats both per-message registration
+  and a cache, for buffers an application reuses** (measured 2026-09-02,
+  same system): an explicit register/deregister pair keyed by exact
+  (pointer, length), looked up on the send and receive-post paths, was the
+  fastest arm on both builds and identical across them -- 5-13% faster
+  than register-and-release per message, 3% faster than the leaking code
+  it replaces.  The split per remote message: the registration itself
+  ~1 us, the release (two deregistrations plus one small message) ~4 us.
+  Ship the per-message release as the correctness fallback and the
+  explicit lifetime as the fast path; a cache is neither.
 - Discipline that made this cheap to establish: the runtime prints, on PE 0,
   which behaviour is in force (released / NOT released), so every run states
   its own arm instead of the job script implying it.
