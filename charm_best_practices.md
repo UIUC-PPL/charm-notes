@@ -2101,3 +2101,44 @@ reading the path, not by any test failing:
   nothing after the call, but tracing brackets, current-object bookkeeping
   and LB timers are not written for two handler levels.  Push the message
   on the PE's queue instead; it costs one enqueue.
+
+## A zero-argument SDAG entry cannot be matched by reference number (2026-09-02)
+
+`when done[k]()` on an entry declared `entry void done();` compiles and never
+matches: the closure charmxi generates for a zero-argument entry carries no
+reference number, so the `when` compares against an unset field and the
+run hangs silently at the first such wait (observed: a stencil benchmark
+waiting for source-buffer acks, two jobs lost to the hang).  For
+marshalled entries the first parameter is the reference number; for
+message entries it is the envelope's.  A callback fired by the runtime
+with no payload (`cb.send()` on a `CkCallback` with `setRefnum(k)`) arrives
+as an empty system message whose envelope carries `k`, so the entry must be
+declared to take a message (`message AckMsg; entry void done(AckMsg*)`;
+`when done[k](AckMsg* m) serial { delete m; }`) for the match to work.
+
+## Acknowledgements on a zerocopy path: piggyback them on the reverse message (2026-09-02, Frontier, 8x MI250X)
+
+Measured on the reconverse device zerocopy path.  Two acknowledgements
+can follow a one-sided get: "release the per-message registration" and
+"the source buffer may be reused" (the source callback).  One message per
+buffer for either costs 4 us per remote message here; at 2 chares per GPU
+that was +11% on the iteration.  Carrying the acknowledgement as an 8-byte
+id inside the next message the receiver sends to that PE -- in a stencil
+there is always one -- with a standalone flush only on overflow or at
+idle, brought the release to within 1% of not releasing at all, and the
+source callback to 3-4% (what remains is the local callback delivery, not
+the wire).  Two design points that made it cheap: the id is minted and
+resolved on the sender, so the callback object never travels; and the
+block rides inside the zerocopy metadata message, so the converse header
+and every other message are untouched.  And an application that
+double-buffers its send buffers needs no source acknowledgement at all: a
+neighbour that has sent its message i+1 has finished reading buffer i.
+Keep that path free of any per-message state.
+
+A registered device POOL (buddy-allocator arenas, each registered lazily
+and whole on its first network use, regions found by range containment)
+was faster still than explicit per-buffer registration -- 2% here, one
+memory region per process instead of eight per chare -- with no
+registration call in the application.  The pool owns the arena's
+lifetime, which is what makes the registration safe without allocator
+hooks; sweeping idle arenas belongs in idle or load-balancing time.
