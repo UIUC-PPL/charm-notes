@@ -2178,3 +2178,27 @@ chare per GCD, us:
   512^2 Jacobi chare issues its own kernels and copies in 26 us on one
   stream; the exchange adds 33; the second stream adds 18-21 with no
   exchange at all.
+
+## Overdecomposition on GPUs pays at two chares per device, and PEs per device lift the issue floor (2026-09-02, Frontier, MI250X, Slingshot)
+
+Two closing measurements of the same stencil campaign, with the cheap
+device protocol (one stream per chare, registered buffers, piggybacked
+acks):
+
+- **Two nodes**: with one chare per device the inter-node ghost exchange
+  costs 11 us per chare-iteration over the one-node cost, at every block
+  size.  With two or more chares per device the two-node per-chare cost
+  equals the one-node cost within 1-3%, at every rung to 32.  So
+  overdecomposition hides the fabric completely at 2 chares per device
+  and costs nothing beyond, with one stream per chare; the cost that
+  remains is the on-node issue floor.
+- **PEs per device**: where the chare is issue-bound (a 512^2 stencil
+  block: 26 us of device work to issue, 33 us of exchange, ~10 us of
+  actual device time), one PE thread leaves the device 60-70% idle no
+  matter how many chares it carries.  Running several PEs per process
+  against one GPU (`+ppn 2`, `+ppn 4`; reconverse takes `+ppn` alone, not
+  with `+pe`) lifts that nearly linearly: 62 -> 40 -> 25 us per
+  chare-iteration; device-bound chares (2048^2) go from 106 to 81 us,
+  within 6% of their device-only time.  Four PEs on seven cores with SMT
+  was enough; the application's own host work under ppn was not
+  measured.
