@@ -2316,3 +2316,26 @@ had a fallback and this one did not; a consistency test over the whole query
 family (lists partition the PEs, first/size/rank agree) found it because it
 runs on a Mac without hwloc, a configuration CI never exercised. Coverage
 percentages point at where to look; contract tests are what find the bugs.
+
+## A machine layer must declare the properties Charm++ consults, or they silently read as 0 (2026-09-11, reconverse)
+
+Classic layers declare their properties in `src/arch/<layer>/conv-common.h`
+(`CMK_ONESIDED_IMPL`, `CMK_MACHINE_PROGRESS_DEFINED`, ...). A reconverse build
+has no such file, and an undefined `CMK_*` macro is simply 0 in every `#if`,
+so Charm++ quietly took the copy-based-layer path: `zcQdIncrement` created
+two quiescence counts per Direct-API RDMA op while the RMA path acks once,
+and quiescence was never detected again after one cross-process
+`CkNcpyBuffer::get`. Symptom: every rank idle in the scheduler, no blocked
+send, `direct_api` (same ops, no QD) passing. `CkNetworkProgress()` compiled
+to nothing for the same reason. Fix: declare them in reconverse's headers
+(PR #222); `CMK_ONESIDED_IMPL 1` also switches on the readonly zerocopy
+broadcast in charmxi output, which reconverse cannot run yet, so
+`CMK_ONESIDED_RO_DISABLE 1` goes with it.
+
+How it was found: Kale's cue "compare with how classic handled it" led to
+the per-layer macro; the decisive test was patching the count to 1 in a
+disposable charm worktree (passes) and running with `+nordma` (aborts, a
+separate bug). The audit that generalizes it: list `define CMK_*` in a
+classic layer's conv-common.h, check each for a `#define` in the reconverse
+build's include dir, and grep charm's core for uses of the missing ones.
+Two of eighteen were used; both were bugs.
