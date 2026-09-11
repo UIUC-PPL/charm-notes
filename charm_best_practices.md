@@ -2303,8 +2303,12 @@ Reconverse's scheduler queue kept (message, priority) pairs in a
 on messages of one priority being scheduled in arrival order (classic's Cqs
 guarantees it); nothing tested it, and 81% line coverage of the file from
 Charm++ tests said nothing about the contract. A 60-line ctest that pushes 50
-equal-priority messages and pops them found it in one run; the fix is an
-arrival sequence number in the ordering key (reconverse PR #220).
+equal-priority messages and pops them found it in one run. The first fix, an arrival sequence number in the heap
+key, cost 40-60% per heap operation and was rejected on review; the fix that
+stayed (reconverse PR #220) is classic's design, one deque per live priority
+level in an ordered map, which is flat in depth (~24 ns/op with a few
+levels) and gives LIFO for free. Measure the candidate structure before
+proposing it: a 60-line microbenchmark settled a design argument in minutes.
 
 Same PR, same lesson from the other direction: `CmiGetPesOnPhysicalNode`
 crashed whenever CPU topology was unavailable, because every sibling query
