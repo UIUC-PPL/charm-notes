@@ -2295,3 +2295,20 @@ does not relink against a rebuilt `libck.a` (delete the binary first), and
 "tcgetattr: Operation not supported on socket" from a non-tty shell, so run
 it in a background command. A test binary can be copied elsewhere and run
 from there (RPATH is absolute) while its directory is being rebuilt.
+
+## Pin ordering contracts with tests; std::priority_queue is not FIFO within a key (2026-09-10, reconverse)
+
+Reconverse's scheduler queue kept (message, priority) pairs in a
+`std::priority_queue`, which gives no order among equal keys. Charm++ relies
+on messages of one priority being scheduled in arrival order (classic's Cqs
+guarantees it); nothing tested it, and 81% line coverage of the file from
+Charm++ tests said nothing about the contract. A 60-line ctest that pushes 50
+equal-priority messages and pops them found it in one run; the fix is an
+arrival sequence number in the ordering key (reconverse PR #220).
+
+Same PR, same lesson from the other direction: `CmiGetPesOnPhysicalNode`
+crashed whenever CPU topology was unavailable, because every sibling query
+had a fallback and this one did not; a consistency test over the whole query
+family (lists partition the PEs, first/size/rank agree) found it because it
+runs on a Mac without hwloc, a configuration CI never exercised. Coverage
+percentages point at where to look; contract tests are what find the bugs.
