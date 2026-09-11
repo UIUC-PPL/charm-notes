@@ -77,7 +77,9 @@ charm-side record-replay repairs are on reconverse-specific-build.
   "Hello 0 created" and exits 0 — looks like a runtime break but is the
   example itself. Don't use it as a smoke test until reverted upstream;
   use benchmarks/charm++/pingpong (19 phases, unpolluted).
-- Binaries need `DYLD_LIBRARY_PATH=<build>/lib` even SINGLE-process now:
+- (FetchContent-era builds only; the submodule-era charm from #3969 adds an
+  RPATH and needed no DYLD_LIBRARY_PATH anywhere, verified 2026-09-10.)
+  Binaries need `DYLD_LIBRARY_PATH=<build>/lib` even SINGLE-process now:
   libreconverse is a dylib and charmc-linked binaries carry no LC_RPATH
   ("Library not loaded: @rpath/libreconverse.dylib" without it).
 

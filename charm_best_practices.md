@@ -2202,3 +2202,58 @@ acks):
   within 6% of their device-only time.  Four PEs on seven cores with SMT
   was enough; the application's own host work under ppn was not
   measured.
+
+## Measuring reconverse coverage with clang source-based coverage (2026-09-10, Mac)
+
+Recipe and traps from the first coverage pass over reconverse (results:
+`~/software/recharm/coverage/REPORT-reconverse-2026-09.md`; reconverse's
+own 39 tests reach ~58% of instrumentable lines, all of charm's tests
+together ~46%, union ~60%; shared-memory IPC, `msgmgr.cpp` and
+`cpuaffinity.cpp` are essentially untested by anything).
+
+- **Flags.** `-fprofile-instr-generate -fcoverage-mapping` on compiles,
+  `-fprofile-instr-generate` on every link. Tools are `xcrun llvm-profdata
+  merge -sparse` and `xcrun llvm-cov report|export|show`; no lcov/gcovr
+  needed. Set `LLVM_PROFILE_FILE=<dir>/%p-%m.profraw` so each lcrun
+  process writes its own file. Reconverse ends with `exit()`, so the
+  atexit writer runs; a test that aborts or segfaults leaves no profile.
+- **Standalone reconverse**: pass the flags as `CMAKE_{C,CXX}_FLAGS` and
+  `CMAKE_{EXE,SHARED}_LINKER_FLAGS`; set
+  `-DRECONVERSE_TEST_LAUNCHER=<build>/_deps/lci-src/lcrun` (default is
+  `mpirun`). Test binaries link `libreconverse.a` statically, so pass EVERY
+  test binary as `-object` to llvm-cov, and know that objects no test
+  references (`msgmgr.cpp`, `cmishmem.cpp`) are dropped by the linker and
+  become invisible rather than 0% — llvm-cov cannot read a `.a`.
+- **Charm on reconverse**: reconverse is `add_subdirectory`'d into charm's
+  CMake build, so `CMAKE_CXX_FLAGS` reaches it, but bare flags on the
+  `./build` line (EXTRA_OPTS) do NOT — `cmake/reconverse/CMakeLists.txt`
+  clears the directory compile options. `--with-cmake-args` cannot carry a
+  value with a space either: `buildcmake` splits it with `read -r -a`, so a
+  backslash-escaped space is passed literally and cmake errors on
+  `-fcoverage-mapping`. What works: `./build charm++ <arch> -g
+  --only-configure --force`, then in the build dir `cmake -DCMAKE_CXX_FLAGS=...
+  -DCMAKE_C_FLAGS=... -DCMAKE_SHARED_LINKER_FLAGS=... -DCMAKE_EXE_LINKER_FLAGS=... .`,
+  then `make -j4`. Report against `-object <build>/lib/libreconverse.dylib`
+  alone; the dylib carries every reconverse object's mapping.
+- **Test Makefile trap.** `make CHARMC=$B/bin/charmc OPTS='-f...'` drops
+  OPTS: the tests' Makefiles define `CHARMC=../../../bin/charmc $(OPTS)`, and
+  overriding `CHARMC` replaces that whole expansion. Put the flags inside
+  `CHARMC="$B/bin/charmc $F"` as well as `OPTS="$F"`. Charm's static libs
+  are instrumented too, so a link without the flag fails with undefined
+  `___llvm_profile_runtime`.
+- **RPATH works.** With the submodule-era charm (charm#3969), charmc adds
+  `-Wl,-rpath` for the reconverse lib dir; `DYLD_LIBRARY_PATH` was needed
+  nowhere, single- or multi-process. The earlier "needs DYLD_LIBRARY_PATH
+  even single-process" note applied to the FetchContent-era build.
+- **"N functions have mismatched data"** from llvm-cov is expected here:
+  every test binary defines its own `main` and handlers under the same
+  names, and header inlines exist in both the dylib and charm's objects.
+  Check the duplicate list with `llvm-profdata show --all-functions | sort
+  | uniq -d`; if none are runtime `src/` functions the totals stand.
+- **Denominators move between configurations** (header instantiation,
+  `CMK_TASKQUEUE` on in reconverse CI, off in charm's build). Compare
+  percentages only loosely, or compare covered-line counts of the same file.
+- On reconverse, `tests/charm++/zerocopy` and `io_read` segfault and
+  `within_node_bcast` reports a mismatch (instrumented build, 2026-09-10,
+  charm `310d470e0`); `queue`, `longIdle` and `tests/converse/megacon` do
+  not build. Reproduce on a plain build before filing.
