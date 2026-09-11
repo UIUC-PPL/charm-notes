@@ -2257,3 +2257,41 @@ together ~46%, union ~60%; shared-memory IPC, `msgmgr.cpp` and
   `within_node_bcast` reports a mismatch (instrumented build, 2026-09-10,
   charm `310d470e0`); `queue`, `longIdle` and `tests/converse/megacon` do
   not build. Reproduce on a plain build before filing.
+
+## Within-node broadcast has three contracts, and Charm++ depends on all of them (2026-09-10, reconverse)
+
+`CmiWithinNodeBroadcast` (reconverse) / `CmiWithinNodeBroadcastFn` (classic,
+`src/arch/util/machine-broadcast.C`) is what `CkBroadcastWithinNode` and the
+node-level array/group broadcast forward (`_processBocBcastMsg`) sit on.
+Reconverse implemented it as "CmiSyncSend to every PE", which breaks three
+things Charm++ assumes (reconverse branch `fix/within-node-bcast-nokeep`):
+
+1. **nokeep messages are shared by pointer**, one `CmiReference` per PE, so a
+   `[nokeep]` entry method sees one buffer. Marshalled entries are nokeep by
+   default (`xi-Entry.C`: `SNOKEEP` for marshalled, non-threaded), so this is
+   the common case, not a corner. `tests/charm++/within_node_bcast` counts
+   `fetch_add` on an atomic inside the message and fails with copies.
+2. **A zerocopy broadcast receive (`CMK_ZC_BCAST_RECV_MSG`) goes to the
+   calling PE only.** ckrdma.C's protocol runs the PEs of a node in turn on
+   one shared envelope (post, rget, rewrite source pointers and `ncpyEmInfo`
+   in the message, flip to `RECV_DONE`, then `CmiForwardMsgToPeers`). Deliver
+   it to all PEs at once and they race on the envelope; the symptom is a
+   segfault in `isUnposted` on a tag array of size 0 (`tests/charm++/zerocopy`).
+3. **The caller's buffer is consumed** (delivered to self with
+   `CmiSyncSendAndFree`); otherwise every non-nokeep broadcast leaks one
+   message.
+
+Diagnostic that settled it in minutes after an hour of reading: a
+`CmiPrintf` at `_processBocBcastMsg`, `CkArray::recvBroadcast` (RECV and DONE
+branches) and `forwardZCMsgToOtherElems`, printing PE, envelope pointer and
+zc type, run on both runtimes. Classic: one RECV then N-1 DONE on the same
+envelope; reconverse: N concurrent RECVs. When a shared-source Charm++ path
+fails on one runtime only, trace the message-delivery order on both before
+reading further.
+
+Two traps while doing this on a Mac: `make CHARMC=... OPTS=...` in a test dir
+does not relink against a rebuilt `libck.a` (delete the binary first), and
+`script -q /dev/null` (pty for line-buffered output) fails with
+"tcgetattr: Operation not supported on socket" from a non-tty shell, so run
+it in a background command. A test binary can be copied elsewhere and run
+from there (RPATH is absolute) while its directory is being rebuilt.
