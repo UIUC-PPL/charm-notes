@@ -706,3 +706,37 @@ zero chance of running today, and making it eligible early requires
 window comfortably — deferring a second job to the NEXT morning because
 one is already queued at 09:30 is over-cautious; begin it 60-90 min
 later the same morning instead.
+
+## Corrections from the 2026-09-11 validation run (reconverse PRs on a compute node)
+
+Found by an agent running reconverse's ctest and Charm++'s reconverse tier
+inside Slurm jobs; each one cost a job cycle.
+
+- `-DRECONVERSE_TEST_LAUNCHER='srun --mpi=pmi2'` does NOT work: CMake treats
+  the string as one executable ("Could not find executable srun --mpi=pmi2").
+  It must be a CMake list: `-DRECONVERSE_TEST_LAUNCHER='srun;--mpi=pmi2'`.
+- A reconverse binary started WITHOUT `srun` inside a Slurm allocation hangs
+  forever: LCI's PMI bootstrap reads the inherited `SLURM_NTASKS` /
+  `SLURM_PROCID` and waits for peers that never come. So reconverse's ctest
+  cannot run as-is inside sbatch (its single-process tests exec the binary
+  directly). Split it: run the direct tests with `env -u SLURM_NTASKS -u
+  SLURM_PROCID ...` (unset every `SLURM_*` and `PMI*` variable), and the
+  launcher tests with the environment intact. Verified by A/B/C probe.
+- The hwloc module sets `RCAC_HWLOC_ROOT` and `HWLOC_HOME`, not `HWLOC_ROOT`;
+  reconverse's FindHWLOC wants `-DHWLOC_ROOT_DIR=$RCAC_HWLOC_ROOT`.
+- Batch scripts must `module load hwloc` (or put `$RCAC_HWLOC_ROOT/lib` on
+  `LD_LIBRARY_PATH`) or every binary dies with `libhwloc.so.5: cannot open
+  shared object file`.
+- `module load X | head` silently does nothing: `module` is a shell function
+  and the pipe runs it in a subshell. Never pipe a module command.
+- Multi-process ctest entries like `reduction_node`'s `srun -n 4 ... +pe 8`
+  busy-poll 8 PE threads; inside an 8-CPU allocation they time out
+  (180 s), with 16 CPUs they pass in under a second. Give the ctest job at
+  least twice the PEs it will spawn.
+- `shared` rejects `-N 2` (QOSMaxNodePerJobLimit); two-node jobs need
+  `wholenode` (or `standard`/`wide`), whose backlog reached ~23,000 pending
+  jobs on 2026-09-11 with multi-hour estimated starts. `debug` rarely frees
+  two nodes. Plan two-node validation a day ahead, or use Delta.
+- On a `shared`-partition node the cgroup may exclude OS cores 0-3, so
+  `+pemap 0-3` fails with `CmiSetCPUAffinity failed`; that is the
+  allocation, not reconverse. Read the cgroup's cpuset before choosing a map.
