@@ -2339,3 +2339,42 @@ separate bug). The audit that generalizes it: list `define CMK_*` in a
 classic layer's conv-common.h, check each for a `#define` in the reconverse
 build's include dir, and grep charm's core for uses of the missing ones.
 Two of eighteen were used; both were bugs.
+
+## Reconverse's ConverseInit runs no affinity, topology, or IPC bootstrap; Charm++ does (2026-09-12, reconverse)
+
+Classic Converse's startup calls `CmiInitCPUAffinity`, `CmiInitCPUTopology`
+and (under CMK_USE_SHMEM) the IPC bootstrap from inside the runtime.
+Reconverse defines all of them but its `ConverseInit` calls none; Charm++'s
+`init.C` calls them all (affinity, then topology, then `CmiCheckAffinity`;
+`CmiIpcInit` on every PE and `CmiMakeIpcManager` from a suspendable thread
+that then `CthSuspend`s). So on reconverse:
+
+- A standalone Converse program that wants `+pemap`/`+setcpuaffinity` or
+  `CmiPhysicalNodeID` to mean anything must call those functions itself
+  (the pingpong tests do; most tests do not, which is why `cpuaffinity.cpp`
+  measured 8% coverage). Without `CmiInitCPUTopology`, every process is
+  its own physical node.
+- The `CmiInitCPUAffinity` body is under `#if defined(CPU_OR)` (glibc
+  `cpu_set_t`), so on macOS the flags are accepted and ignored. Binding
+  claims need Linux.
+- `converse.h` does not include `converse_config.h`. A test that must know
+  a build option (`CMK_USE_SHMEM`, `CMK_TASKQUEUE`) includes
+  `converse_config.h` itself, or it silently compiles the option-off branch.
+  (First version of `tests/runtime_modes` printed "CMK_USE_SHMEM off" in the
+  shmem build for exactly this reason.)
+- Two functions Charm++ calls were never declared in reconverse's headers
+  (`CmiInvokeRemoteDeregAckHandler`, `CmiCheckAffinity`); Charm++ carries its
+  own declarations, so nothing noticed until a Converse-level test called
+  them. Grep Charm++'s `Cmi*` calls against reconverse's headers when adding
+  a layer feature.
+
+Two related contract facts pinned by `tests/runtime_modes` (reconverse #227):
+on the RMA path the Direct API acknowledgement runs on whichever PE of the
+initiating *process* drives LCI progress (PE 0 of the process on the Mac),
+not on the initiating PE, so per-PE counters in an ack handler are wrong
+(use process-wide atomics, and send a message to the PE that owns the
+buffer); and right after the IPC bootstrap the peer's segment can report
+`CMI_IPC_TIMEOUT` because its owner initialises it only after the pid
+exchange reaches it. Charm++'s `_tryIpcSend` tolerates that by falling back
+to a network send; a test must wait, bounded, and treat any other status as
+a failure.
