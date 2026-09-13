@@ -10,6 +10,20 @@ project status out of this file; it belongs in per-project memory.
 - Package manager: MacPorts (`/opt/local`), NOT Homebrew. Installs need
   Kale at a real terminal (`sudo` requires a TTY; the `!`-prefix shell in
   a Claude session has no TTY).
+- **Command Line Tools were reinstalled 2026-09-13** (CLT 16.4, clang 17)
+  with `sudo softwareupdate --install "Command Line Tools for Xcode-16.4"`
+  after `xcode-select --install` produced no dialog. The previous CLT
+  install was damaged: any C++ compile through the CLT failed with
+  `'iostream' file not found`, which surfaced as MacPorts failing to
+  bootstrap its `cmake` port (needed whenever a port has no prebuilt
+  binary). CLT 16.4 keeps libc++ headers INSIDE each SDK
+  (`SDKs/MacOSX15.5.sdk/usr/include/c++/v1/`), not under
+  `CommandLineTools/usr/include/c++/v1` — do not use the latter path as
+  a health check; compile a C++ file with
+  `DEVELOPER_DIR=/Library/Developer/CommandLineTools /usr/bin/clang++`.
+  MacPorts logs are world-readable under `/opt/local/var/macports/logs/`,
+  so a failed `port install` can be diagnosed from a Claude shell.
+- `json-c` 0.19 installed via MacPorts 2026-09-13 (Margo dependency).
 - libfabric is installed via MacPorts (needed by reconverse builds).
 - `gh` is authenticated as `lvkale`, with push rights to
   charmplusplus/charm and the UIUC-PPL organization repositories.
