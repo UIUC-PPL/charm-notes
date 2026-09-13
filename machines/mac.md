@@ -52,7 +52,7 @@ project status out of this file; it belongs in per-project memory.
 | Path | Runtime | Purpose |
 |---|---|---|
 | `~/software/clusterFinding/charm` (build `netlrts-darwin-arm8-smp`) | classic Converse, mainline main | paratreet2 laptop builds (`CHARM_HOME` points at the build dir) |
-| `~/software/recharm/charm` (build `reconverse-darwin-arm8`) | reconverse, branch `reconverse-specific-build` | local reconverse testing; user-installed reconverse variant |
+| `~/software/recharm/charm` (build `reconverse-darwin-arm8`) | reconverse, branch `reviewed-with-reconverse` (switched 2026-09-13 from the stale `reconverse-specific-build`; reconverse is the `contrib/reconverse` submodule, pinned `58921e9`). The `reconverse-darwin-arm8` build dir on disk predates the switch and needs a rebuild before use. Coverage work lives in the separate worktree `~/software/recharm/coverage/charm-wt` | local reconverse testing on the reviewed line |
 | `~/software/seedbalancing/charm` (build `reconverse-darwin-arm8`) | reconverse | seed-balancing runtime project |
 | `~/software/charm/netlrts-darwin-arm8-smp` | classic | OLD, non-production build — never use for benchmarking |
 | `~/software/charm-sumdbytes/charm` (build `netlrts-darwin-arm8`) | classic, upstream main | fresh clone for the .sumd message-bytes work (charm#3937); built with `-DTRACING=1` |
