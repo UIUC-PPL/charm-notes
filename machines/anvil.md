@@ -56,7 +56,10 @@ provides it (`module -t avail ninja` prints nothing). Install it per user:
     module load python/3.9.5 && pip install --user ninja   # gives ninja 1.13.2
     export PATH=$HOME/.local/bin:$PATH
 
-Otherwise use CMake's default Unix Makefiles generator.
+Otherwise use CMake's default Unix Makefiles generator. **This applies to
+STANDALONE reconverse builds only (2026-09-13):** charm's `./build` drives
+CMake with the Unix Makefiles generator, so a charm-with-reconverse build never
+looks for ninja.
 
 ## Charm++ / Converse installations
 
@@ -101,42 +104,42 @@ rebuild:
 `lcrun` is at `<build>/_deps/lci-src/lcrun`, not in `bin/` (`$LCRUN` in
 env.sh). On compute nodes prefer `srun --mpi=pmi2` over `lcrun`.
 
-### Multi-node: never launch with ONE PE per physical node (2026-09-01)
+### Multi-node startup hang with ONE PE per physical node — FIXED UPSTREAM (2026-09-13)
 
-Two-node reconverse hangs at startup — before any application code — if
-physical node 0 ends up holding exactly one PE. `srun --mpi=pmi2 -N2 -n2
-./app +pe 2` is the shape that triggers it. Nothing prints after
-`cpu topology info is gathered`, and the job dies on the walltime kill.
-
-It is NOT the network and NOT the launcher: `LCI_NETWORK_BACKENDS=ofi`
-and `=ibv` hang identically, and `--mpi=pmi2` is necessary (plain `srun`
-prints nothing at all) but not sufficient. Every rank is parked in
-`CmiCheckAffinity` -> `cpuAffSyncWait` (`reconverse/src/cpuaffinity.cpp`),
-spinning on a flag that is set only in `cpuPhyNodeAffinityRecvHandler`.
-The senders are exactly the PEs with `CmiPhysicalNodeID(pe) == 0`, so
-with one PE on physical node 0 nobody sends and the flag never flips.
-The run hangs synchronizing affinity it is not even using — the banner
-says `cpu affinity NOT enabled`.
-
-**Workaround, no patch needed** — give physical node 0 at least 2 PEs.
-Both verified passing on the unpatched build:
-
-    srun --mpi=pmi2 -N 2 -n 2 -c 2 ./app +pe 4    # 2 PEs per process
-    srun --mpi=pmi2 -N 2 -n 4      ./app +pe 4    # 2 processes per node
-
-**Real fix** — guard the wait so PE 0 only waits when a sender exists:
+**Fixed (2026-09-13).** The guard is present in the reconverse that charm
+`reviewed-with-reconverse` pins, in `contrib/reconverse/src/cpuaffinity.cpp`:
 
     if (CmiNumPesOnPhysicalNode(0) > 1)
       cpuAffSyncWait(cpuPhyAffCheckDone);
 
-Verified on Anvil: with the guard, `-N2 -n2 +pe 2` passes for both
-pingpong and megatest, and the >=2-PE shapes are unaffected. (Separately,
-the handler's `++count == CmiNumPesOnPhysicalNode(0) - 1` at line 198 is
-unreachable when that count is 1; the guard makes it moot.)
+So no workaround is needed at or after reconverse `58921e9` / charm `8d21fda`.
+Verified on Anvil 2026-09-13: `srun --mpi=pmi2 -N2 --ntasks-per-node=1 -n 2
+./megatest +pe 2` — exactly the shape that used to hang — ran and passed.
 
-This is why no successful 2-node run was recorded here before: every
-attempt used one PE per node. First working 2-node pingpong, patched:
-Groups roundtrip 13.07 us, NodeGroups 13.20 us, threaded Chares 14.55 us.
+**History, for older builds (first seen 2026-09-01).** Two-node reconverse hung
+at startup, before any application code, if physical node 0 ended up holding
+exactly one PE. `srun --mpi=pmi2 -N2 -n2 ./app +pe 2` was the shape that
+triggered it: nothing printed after `cpu topology info is gathered` and the job
+died on the walltime kill. It was not the network and not the launcher —
+`LCI_NETWORK_BACKENDS=ofi` and `=ibv` hung identically, and `--mpi=pmi2` was
+necessary (plain `srun` printed nothing at all) but not sufficient. Every rank
+was parked in `CmiCheckAffinity` -> `cpuAffSyncWait` (`src/cpuaffinity.cpp`),
+spinning on a flag set only in `cpuPhyNodeAffinityRecvHandler`. The senders are
+exactly the PEs with `CmiPhysicalNodeID(pe) == 0`, so with one PE on physical
+node 0 nobody sent and the flag never flipped. The run hung synchronizing
+affinity it was not even using — the banner said `cpu affinity NOT enabled`.
+(Separately, the handler's `++count == CmiNumPesOnPhysicalNode(0) - 1` at line
+198 is unreachable when that count is 1; the guard makes it moot.)
+
+On a build that predates the guard, give physical node 0 at least 2 PEs; both
+of these were verified passing:
+
+    srun --mpi=pmi2 -N 2 -n 2 -c 2 ./app +pe 4    # 2 PEs per process
+    srun --mpi=pmi2 -N 2 -n 4      ./app +pe 4    # 2 processes per node
+
+This is why no successful 2-node run was recorded here before 2026-09-01: every
+attempt used one PE per node. First working 2-node pingpong: Groups roundtrip
+13.07 us, NodeGroups 13.20 us, threaded Chares 14.55 us.
 
 ### tracedcharm — the Projections-enabled twin (built 2026-07-26)
 
@@ -154,6 +157,12 @@ Two things about charm's `./build` that are easy to get wrong:
   `TRACING` is a cache STRING that defaults to **0 for any non-Debug build**
   (`CMakeLists.txt:190-195`), so a `--with-production` build has NO trace
   modules and `charmc -tracemode projections` aborts with "No such tracemode".
+  **The converse is also true and easy to miss (2026-09-13):** `-g` on
+  `./build` sets `CMAKE_BUILD_TYPE=Debug`, and a Debug build turns TRACING ON
+  by itself — such a build reports "Enabled options: TRACING ERROR_CHECKING
+  ZLIB" and carries tracing overhead in `libck` even though `--enable-tracing`
+  was never passed. Never quote a timing from a `-g` build; use
+  `--with-production` for anything measured.
 - Raw `-D` options must go through **`--with-cmake-args="..."`**. Unrecognised
   arguments are silently appended to the COMPILER flags instead
   (`buildcmake:487-489`), so `-DLCI_USE_REG_CACHE=ON` passed directly becomes a
@@ -233,15 +242,26 @@ For sessions setting up a NEW charm/reconverse tree (e.g. a branch under
 review) rather than using `recharm/`. Every fact here is expanded in the
 sections around it; this is the assembled path.
 
-    cd $PROJECT/$USER/software           # NEVER $HOME (25 GB quota)
-    git clone https://github.com/charmplusplus/charm <dir> && cd <dir>/
-    git checkout <branch>
-    git clone https://github.com/charmplusplus/reconverse   # in-tree copy
-    module load python/3.9.5 hwloc       # BOTH required; failures are silent
-    ./build charm++ reconverse-linux-x86_64 --with-production -j8 \
-        --with-fetch-reconverse-dir=$PWD/reconverse \
-        --with-cmake-args="-DRECONVERSE_ENABLE_CPU_AFFINITY=ON -DHWLOC_ROOT_DIR=$HWLOC_ROOT"
+**Submodule era (2026-09-13).** On `reviewed-with-reconverse` reconverse is a
+git SUBMODULE at `contrib/reconverse`. There is no separate reconverse clone
+and no `--with-fetch-reconverse-dir` flag; the separate-clone recipe this
+section used to carry is obsolete for this branch.
 
+    cd $PROJECT/$USER/software           # NEVER $HOME (25 GB quota)
+    git clone --branch reviewed-with-reconverse --recurse-submodules \
+        https://github.com/charmplusplus/charm <dir> && cd <dir>/
+    module load python/3.9.5 hwloc       # BOTH required; failures are silent
+    ./build charm++ reconverse-linux-x86_64 -j8 -g \
+        --with-cmake-args="-DRECONVERSE_ENABLE_CPU_AFFINITY=ON -DHWLOC_ROOT_DIR=$RCAC_HWLOC_ROOT"
+
+- `--recurse-submodules` is convenience, not a requirement: if it is forgotten,
+  cmake initializes `contrib/reconverse` itself during configure (2026-09-13).
+- The two `module load`s go on top of the DEFAULT modules (gcc/11.2.0,
+  libfabric/1.12.0), which a bare login already has (2026-09-13).
+- A login-node build of this shape took about 7 minutes (2026-09-13).
+- `-g` gives a Debug build, and Debug turns TRACING ON — see the tracedcharm
+  section. Fine for correctness testing; use `--with-production` for anything
+  whose timing you intend to quote (2026-09-13).
 - Raw `-D` options MUST ride `--with-cmake-args`; passed directly they are
   silently appended to compiler flags (see tracedcharm section).
 - The new tree needs its own environment: the existing `recharm/env.sh`
@@ -253,6 +273,18 @@ sections around it; this is the assembled path.
   on compute nodes — see the 2026-08-03 section). Do not smoke with
   `examples/charm++/hello/1darray`: upstream `9e48ce995` left a `CkExit()`
   in the Hello constructor, so it exits 0 after one line and false-passes.
+- `tests/reconverse-site-run.sh` (charm #3975, merged 2026-09-12) runs the
+  reconverse tier for a site in one command (2026-09-13):
+
+      SITE=anvil NODES=1 PROCS=2 CHARM_BUILD=<build> tests/reconverse-site-run.sh
+
+  Run it from inside an sbatch script that also does `unset
+  SLURM_CPUS_PER_TASK; export SLURM_CPU_BIND=none SRUN_CPU_BIND=none` (Slurm
+  idioms). It prints one `RESULT <dir> <shape> exit=<code>` line per run.
+  `NODES=2` selects the two-node shape. Until the script's built-in defaults
+  are raised, pass the `LAUNCHER_ARGS_SINGLE` / `LAUNCHER_ARGS_MULTI`
+  overrides described under the cpuset-vs-PE-count hazard below — its shipped
+  `-c4` / `-c2` are too small for `+p6` and every such test aborts.
 - Before trusting `ctest` in a reconverse tests build:
   `-DRECONVERSE_TEST_LAUNCHER='srun;--mpi=pmi2'` — a CMake LIST, not the
   string `'srun --mpi=pmi2'` (2026-09-12; default `mpirun` runs every rank as
@@ -375,6 +407,13 @@ and timing conclusions carry over. `highmem` is a high-memory partition —
 check the allocation's billing before using it for anything heavy — but for a
 single-node quick job it belongs in the rotation alongside `shared` and
 `debug`. Check all three with `sinfo` before choosing.
+
+**On `highmem`, ask for the whole node with `--exclusive` (2026-09-13).**
+`highmem -N1 --exclusive` granted all 128 cores and started in ~15 s on one
+submission and ~3 min on another, so the fast turnaround survives asking for
+the whole node. `--exclusive` there also avoids the partial-node cgroup that
+breaks OS-index `+pemap`: without it the step gets a fragmented cpuset (node
+b000 came back as `1-3,8-31,57-61` on 2026-09-12).
 
 **Per-partition QOS node caps are hard limits, not contention:**
 
@@ -595,13 +634,23 @@ on a login shell. All of it was hit in practice.
   `-DHWLOC_ROOT_DIR=...` (its `$ENV{HWLOC}` fallback is dead code — line 22
   tests `ENV{HWLOC}` without the `$`). Charm meanwhile builds its own
   bundled hwloc 2.10.0 in the same tree, which reconverse cannot see.
-- **GPU sbatch without `--cpus-per-task` gets a 1-core cpuset** (2026-08-28):
-  requesting 1 GPU on gpu-debug with default CPU count gave a cpuset in
-  which reconverse's hwloc affinity check aborts every multi-PE run with
-  "Multiple PEs assigned to same core" (SIGABRT, and the reason line is
-  easily lost to buffered stdout). Any `+pe N>1` GPU job needs
-  `--cpus-per-task=<enough>` (e.g. 8). Classic charmrun multi-process
-  runs don't trip the same check, which can mislead A/B comparisons.
+- **"Multiple PEs assigned to same core" means the step cpuset is smaller
+  than the PE count — general, not GPU-specific** (generalized 2026-09-13):
+  reconverse's hwloc affinity check aborts (SIGABRT, and the reason line is
+  easily lost to buffered stdout) on ANY run whose `srun` step cpuset holds
+  fewer CPUs than the process has PEs. **Rule: `-c` must be at least the PEs
+  per process of the largest case in the run.** Observed 2026-09-13 in charm's
+  reconverse tier: `tests/reconverse-site-run.sh` shipped with `srun -N1 -c4`
+  for the single-process shape and `-c2` per task for the multi-process one,
+  and every `+p6` test aborted this way; `-c8` (single) and `-c4` (multi) on
+  one node, and `-N2 --ntasks-per-node=1 -c8` on two nodes, fixed it. Pass
+  them via `LAUNCHER_ARGS_SINGLE` / `LAUNCHER_ARGS_MULTI` until the script's
+  defaults are raised.
+- **The GPU case is the same fault** (2026-08-28, reclassified 2026-09-13):
+  requesting 1 GPU on gpu-debug with the default CPU count gave a 1-core
+  cpuset, so any `+pe N>1` GPU job needs `--cpus-per-task=<enough>` (e.g. 8).
+  Classic charmrun multi-process runs don't trip the same check, which can
+  mislead A/B comparisons.
 - **`module load hwloc` silently swaps CUDA 13.1.0 -> 11.4.2** (2026-08-28):
   hwloc/1.11.13 pulls cuda/11.4.2 as a dependency, and a later
   find_package(CUDAToolkit) then resolves 11.4.2 — which lacks post-11.7
@@ -809,9 +858,14 @@ inside Slurm jobs; each one cost a job cycle.
   (180 s), with 16 CPUs they pass in under a second. Give the ctest job at
   least twice the PEs it will spawn.
 - `shared` rejects `-N 2` (QOSMaxNodePerJobLimit); two-node jobs need
-  `wholenode` (or `standard`/`wide`), whose backlog reached ~23,000 pending
-  jobs on 2026-09-11 with multi-hour estimated starts. `debug` rarely frees
-  two nodes. Plan two-node validation a day ahead, or use Delta.
+  `wholenode` (or `standard`/`wide`). **Two-node turnaround there is not
+  reliably slow (2026-09-13)** — the earlier advice to "plan two-node
+  validation a day ahead, or use Delta" was wrong as a general rule, and the
+  pending-job count is not the thing to read. On 2026-09-13 `wholenode` had
+  136 IDLE nodes and a 2-node job started in under a minute despite ~23,000
+  jobs pending. Check `sinfo` for idle nodes in `wholenode`/`standard` first
+  and then submit; it can be minutes or hours. `debug` rarely frees two
+  nodes.
 - On a `shared`-partition node the cgroup may exclude OS cores 0-3, so
   `+pemap 0-3` fails with `CmiSetCPUAffinity failed`; that is the
   allocation, not reconverse. Read the cgroup's cpuset before choosing a map.
