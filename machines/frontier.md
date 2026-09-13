@@ -566,3 +566,89 @@ at the wrong operating point).
   timing binary (7.7% while disabled). --with-production and TRACING=1
   are ORTHOGONAL in buildcmake — an optimized runtime CAN trace; use
   that for traced-but-honest runs (~3% cost, relay65).
+
+## Charm++ reconverse test tier via tests/reconverse-site-run.sh (2026-09-13)
+
+First Frontier run of the committed site script (charm #3975), on
+`reviewed-with-reconverse` 8d21fda / reconverse submodule 58921e9. Result: the
+whole CI directory list passes on 1 node (2 processes) and on 2 nodes once the
+`frontier)` case below is in the script. Jobs 5481253 (1 node), 5481254 (2
+nodes, first attempt), 5481289 (network-flag probe), 5481302 (2 nodes, rerun).
+
+### Clone and build (submodule era)
+
+On this branch reconverse is the git submodule `contrib/reconverse`; there is
+no separate clone and NO `--with-fetch-reconverse-dir` (that flag belongs to
+the campaign's `reconverse-specific-build` branch in ~/software/charm, which
+the Build bootstrap section above describes). Source and build go in the
+project home area, per the Layout section, not Lustre:
+
+    mkdir -p /ccs/proj/csc710/$USER/software && cd $_
+    git clone --branch reviewed-with-reconverse --recurse-submodules \
+        https://github.com/charmplusplus/charm charm-siterun && cd charm-siterun
+    source /opt/cray/pe/lmod/lmod/init/bash      # `module` is undefined in scripts
+    module load PrgEnv-gnu cmake hwloc python    # gcc 13.2, cmake 3.30.5, hwloc 2.11.1, python 3.13
+    ./build charm++ reconverse-linux-x86_64 --with-production -j8 \
+        --with-cmake-args="-DHWLOC_ROOT_DIR=$OLCF_HWLOC_ROOT -DRECONVERSE_ENABLE_CPU_AFFINITY=ON"
+
+About 2 minutes on a login node (LCI is fetched from GitHub at configure time;
+outbound https works). Gates that passed: `RECONVERSE_ENABLE_CPU_AFFINITY:BOOL=ON`,
+`HWLOC_ROOT_DIR` = the module's prefix, `CMAKE_BUILD_TYPE=Release`,
+`include/conv-mach-opt.sh` has `CMK_RECONVERSE="1"` (so `bin/testrun` uses the
+reconverse launch idiom). The tree is 527 MB built.
+
+### The sbatch recipe that works
+
+    #!/bin/bash
+    #SBATCH -A csc710 -p batch -N 1 -t 00:30:00        # -N 2 for the two-node shape
+    source /opt/cray/pe/lmod/lmod/init/bash
+    module load PrgEnv-gnu cmake hwloc python
+    unset SLURM_CPUS_PER_TASK                           # anvil.md 2026-09-12: leaks into every srun
+    export SLURM_CPU_BIND=none SRUN_CPU_BIND=none       # otherwise each task gets a 1-CPU cpuset
+    cd /ccs/proj/csc710/$USER/software/charm-siterun
+    SITE=frontier NODES=1 PROCS=2 CHARM_BUILD=$PWD/reconverse-linux-x86_64 \
+        tests/reconverse-site-run.sh 2>&1 | tee results/siterun-1node.out
+
+Whole tier (13 directories, 26 runs, including compiling megatest) took 2:57
+on one node and 0:41 on two nodes. The frontier case sets `FI_PROVIDER=cxi`,
+`LCI_NETWORK_BACKENDS=ofi`, `PMI_MAX_KVS_ENTRIES=1000` and appends
+`--network=single_node_vni` to both launcher argument sets; the script's
+raised defaults (`-N1 -c8` single, `-N1 -c4` two-on-one-node,
+`-N2 --ntasks-per-node=1 -c8` two-node) were enough for every case (largest
+is +p6; large_bcast's +p10 is only in its test-bench target).
+
+Do not run two instances against one tree at once: each directory's
+`site-*.out` and build products are shared. Queue the second job with
+`--dependency=afterany:<first>`.
+
+### Launcher facts, all measured in-job with simplearrayhello (+pe 4)
+
+- `srun --mpi=pmi2` (the script's default launcher) WORKS on Frontier, and so
+  does plain `srun` (cray_shasta plugin). `srun --mpi=list` offers none, pmi2,
+  cray_shasta. No launcher override is needed for SITE=frontier.
+- CORRECTION to "Multi-node keeps job_vni" (Verified 2026-08-12 section): a
+  two-node step needs no network flag at all (default rc=0), and
+  `--network=single_node_vni` is ACCEPTED on multi-node steps — 2 nodes x 1 task
+  and 2 x 2 tasks both completed with it, alone or as `job_vni,single_node_vni`.
+  What is still true: a step that lands on ONE node aborts without it, in LCI
+  rather than with a readable libfabric message:
+
+      terminate called after throwing an instance of 'std::runtime_error'
+      what(): .../lci-src/src/network/ofi/backend_ofi.cpp:ofi_device_impl_t:236
+              <lci:Assert failed: false> err : Function not implemented
+
+  (SIGABRT, exit 134, and an ~870 MB core file in the working directory per
+  aborting rank — `ulimit -c 0` in the job script if you expect any.)
+- THE TRAP that cost the first two-node run: a "multi-node" pass is not all
+  multi-node. Test Makefiles carry `+p1` cases; testrun clamps processes to PEs,
+  so those become `srun -N2 --ntasks-per-node=1 -n 1`, Slurm prints "can't run
+  1 processes on 2 nodes, setting nnodes to 1", and the step is a one-node step
+  — which then dies as above if only the single-process argument set carried
+  `single_node_vni`. 8 of 13 directories failed that way (every one whose test
+  target starts with a +p1 case); the 5 without a +p1 case passed. Since the
+  flag is harmless on real multi-node steps, the fix is to pass it always.
+- `PMI_MAX_KVS_ENTRIES=1000` was set for every run and never tested absent
+  here; the earlier finding (8-rank launch aborts at the default 30) stands.
+- `make` exits 2 when a test command fails, so a launcher abort shows as
+  `exit=2` on the RESULT line; the appended reason (CmiAbort's "Reason:" or
+  the C++ `what():` text) is what distinguishes it from a real test failure.
