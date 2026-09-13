@@ -50,6 +50,14 @@ Both hazards are written up below. Also available: `gcc/{8.4.1,10.2.0,14.2.0}`,
 `openmpi/{3.1.6,4.1.6}`. Only `hwloc/1.11.13` is offered (fine — reconverse
 has an explicit pre-2.0 API branch).
 
+**No ninja on Anvil (2026-09-12).** `ninja` is not in `PATH` and no module
+provides it (`module -t avail ninja` prints nothing). Install it per user:
+
+    module load python/3.9.5 && pip install --user ninja   # gives ninja 1.13.2
+    export PATH=$HOME/.local/bin:$PATH
+
+Otherwise use CMake's default Unix Makefiles generator.
+
 ## Charm++ / Converse installations
 
 `$PROJECT/$USER/software/recharm/` — Charm++ on reconverse, built
@@ -246,10 +254,12 @@ sections around it; this is the assembled path.
   `examples/charm++/hello/1darray`: upstream `9e48ce995` left a `CkExit()`
   in the Hello constructor, so it exits 0 after one line and false-passes.
 - Before trusting `ctest` in a reconverse tests build:
-  `RECONVERSE_TEST_LAUNCHER='srun --mpi=pmi2'` (default `mpirun` runs every
-  rank as an isolated 1-process job and multi-process tests false-pass; see
-  the mpirun-vs-srun section), plus `-DRECONVERSE_BUILD_TESTS=ON
-  -DRECONVERSE_AUTOFETCH_LCI2=ON` (Hazards).
+  `-DRECONVERSE_TEST_LAUNCHER='srun;--mpi=pmi2'` — a CMake LIST, not the
+  string `'srun --mpi=pmi2'` (2026-09-12; default `mpirun` runs every rank as
+  an isolated 1-process job and multi-process tests false-pass; see the
+  mpirun-vs-srun section), plus `-DRECONVERSE_BUILD_TESTS=ON
+  -DRECONVERSE_AUTOFETCH_LCI2=ON` (Hazards). Inside sbatch also
+  `unset SLURM_CPUS_PER_TASK` and `export SLURM_CPU_BIND=none` (Slurm idioms).
 
 ## Cluster-finding stack (paratreet2 / unionfind / htram)
 
@@ -349,16 +359,29 @@ configuration takes ~8 s wall, so repeats are cheap — use them, phaseA max has
     # then, using the returned JOBID:
     srun --jobid=<ID> --mpi=pmi2 -N 1 -n <procs> --cpus-per-task=<cores/proc> ./app +ppn <PEs>
 
-`-p shared -N 1 --exclusive` grants in seconds and gives all 128 cores.
-Billing is identical to `wholenode` (`TRESBillingWeights=CPU=1.0`), so there
-is no reason to queue for `wholenode` for single-node work.
+`-p shared -N 1 --exclusive` gives all 128 cores, and billing is identical to
+`wholenode` (`TRESBillingWeights=CPU=1.0`), so there is no reason to queue for
+`wholenode` for single-node work.
+
+**It does not reliably grant in seconds (2026-09-12).** An earlier revision of
+this file said it did; that is false as a general statement. On 2026-09-12
+`shared` had 22,636 pending jobs and the estimated start for an exclusive
+single-node job was 3h20m out, and `debug` refused the job outright with
+"Nodes required for job are DOWN, DRAINED or reserved for jobs in higher
+priority partitions". The fast route that day was **`highmem`**: 26 idle
+nodes, the job started in about 40 s, and its node `b000` is the same
+2 x AMD EPYC 7763 / 128-core hardware as the regular CPU nodes, so topology
+and timing conclusions carry over. `highmem` is a high-memory partition —
+check the allocation's billing before using it for anything heavy — but for a
+single-node quick job it belongs in the rotation alongside `shared` and
+`debug`. Check all three with `sinfo` before choosing.
 
 **Per-partition QOS node caps are hard limits, not contention:**
 
 | partition | max nodes/job | max wall | notes |
 |---|---|---|---|
 | `shared` | **1** | 4 d | `OverSubscribe=NO`, consumable cores; `--exclusive` needed for a whole node |
-| `highmem` | **1** | 2 d | often idle, but the cap means it cannot help multi-node |
+| `highmem` | **1** | 2 d | often idle, so the fastest single-node route when `shared` is backed up (2026-09-12); same 2 x EPYC 7763 / 128-core hardware; the cap means it cannot help multi-node |
 | `debug` | 2 (cpu=256) | 2 h | only interactive route to 2 exclusive nodes; shares nodes a[000-016] with `shared` |
 | `standard` / `wholenode` | 16 | 4 d | `OverSubscribe=EXCLUSIVE` (whole nodes automatic, `--exclusive` redundant) |
 | `wide` | 56 | 12 h | same physical nodes as standard |
@@ -377,6 +400,42 @@ wall limit kills it (job 19557989, 2026-07-28 — 20 min of retries, app never
 started). Declare `-n` and `--cpus-per-task` in the `#SBATCH` header (or
 `--exclusive`); on `wholenode`/`standard` this doesn't arise because
 allocation is whole-node.
+
+### An sbatch `--cpus-per-task` leaks into every inner `srun` (2026-09-12)
+
+A job script that declares `#SBATCH --cpus-per-task=N` gets
+`SLURM_CPUS_PER_TASK=N` in its environment, and every `srun` step inherits it.
+A step with more than one task then asks for N CPUs per task: ctest's launcher
+line `srun --mpi=pmi2 -n 2 ...` requests 2 x N CPUs, and Slurm refuses the
+step with
+
+    srun: error: Unable to create step for job <id>: More processors requested than permitted
+
+Every multi-process ctest then fails in 0.01 s, which reads like a runtime
+break and is not. Clear it in the job script before any `srun`:
+
+    unset SLURM_CPUS_PER_TASK
+    export SRUN_CPUS_PER_TASK=1     # optional; sets the per-step default
+
+Pass `--cpus-per-task` on the individual `srun` lines that need it instead.
+Cost one job cycle (job 20624557, 2026-09-12). Note the interaction with the
+paragraph above: the header still needs enough CPUs allocated, it is only the
+inherited per-step default that must go.
+
+### Affinity tests under sbatch need `SLURM_CPU_BIND=none` (2026-09-12)
+
+`+pemap` runs and reconverse's `runtime_modes -expect-bound` test additionally
+need, in the job script:
+
+    export SLURM_CPU_BIND=none
+    export SRUN_CPU_BIND=none
+
+With Slurm's default binding each task's cpuset is a single CPU, so the two
+PEs of a process share that one CPU and the affinity check fails. With
+`--cpu-bind=none` in effect both ranks see the whole job cpuset and a global
+`+pemap L0-3` lands on four distinct CPUs. This is the environment-variable
+form of the `srun --cpu-bind=none` already used in the validated-pemap
+section below.
 
 ### Three traps that invalidate timings
 
@@ -715,20 +774,36 @@ inside Slurm jobs; each one cost a job cycle.
 - `-DRECONVERSE_TEST_LAUNCHER='srun --mpi=pmi2'` does NOT work: CMake treats
   the string as one executable ("Could not find executable srun --mpi=pmi2").
   It must be a CMake list: `-DRECONVERSE_TEST_LAUNCHER='srun;--mpi=pmi2'`.
+  (Re-confirmed 2026-09-12.)
 - A reconverse binary started WITHOUT `srun` inside a Slurm allocation hangs
   forever: LCI's PMI bootstrap reads the inherited `SLURM_NTASKS` /
   `SLURM_PROCID` and waits for peers that never come. So reconverse's ctest
   cannot run as-is inside sbatch (its single-process tests exec the binary
-  directly). Split it: run the direct tests with `env -u SLURM_NTASKS -u
-  SLURM_PROCID ...` (unset every `SLURM_*` and `PMI*` variable), and the
-  launcher tests with the environment intact. Verified by A/B/C probe.
+  directly).
+  **Corrected 2026-09-12:** this entry used to say to unset every `SLURM_*`
+  and `PMI*` variable and to split the suite into a direct-exec run and a
+  launcher run. That is stronger than needed, and unsetting everything breaks
+  `srun` itself. Unsetting just
+
+      SLURM_NTASKS SLURM_NPROCS SLURM_PROCID SLURM_STEP_NUM_TASKS
+      SLURM_TASKS_PER_NODE SLURM_NTASKS_PER_NODE PMI_RANK PMI_SIZE PMI_FD
+
+  and keeping `SLURM_JOB_ID` lets the WHOLE suite run in a single ctest
+  invocation: direct-exec tests and srun-launched tests both passed, 40/40.
 - The hwloc module sets `RCAC_HWLOC_ROOT` and `HWLOC_HOME`, not `HWLOC_ROOT`;
   reconverse's FindHWLOC wants `-DHWLOC_ROOT_DIR=$RCAC_HWLOC_ROOT`.
+  (Re-confirmed 2026-09-12.)
 - Batch scripts must `module load hwloc` (or put `$RCAC_HWLOC_ROOT/lib` on
   `LD_LIBRARY_PATH`) or every binary dies with `libhwloc.so.5: cannot open
-  shared object file`.
+  shared object file`. (Re-confirmed 2026-09-12.)
 - `module load X | head` silently does nothing: `module` is a shell function
-  and the pipe runs it in a subshell. Never pipe a module command.
+  and the pipe runs it in a subshell. Never pipe a module command. That
+  function is already defined in a non-interactive ssh bash, so scripts need
+  not source anything to get it — and `/etc/profile.d/lmod.sh` does not exist
+  on Anvil (2026-09-12), so a script that tries to source it fails.
+- A merged PR's branch is deleted, so `git fetch origin <branch>` finds
+  nothing; fetch the pull ref instead (2026-09-12):
+  `git fetch origin pull/227/head:pr227`.
 - Multi-process ctest entries like `reduction_node`'s `srun -n 4 ... +pe 8`
   busy-poll 8 PE threads; inside an 8-CPU allocation they time out
   (180 s), with 16 CPUs they pass in under a second. Give the ctest job at
@@ -740,3 +815,10 @@ inside Slurm jobs; each one cost a job cycle.
 - On a `shared`-partition node the cgroup may exclude OS cores 0-3, so
   `+pemap 0-3` fails with `CmiSetCPUAffinity failed`; that is the
   allocation, not reconverse. Read the cgroup's cpuset before choosing a map.
+  Confirmed again on `highmem` (2026-09-12), so it is not specific to
+  `shared`: job 20624557 on node b000 had cpuset `1-3,8-31,57-61`, and
+  `+pemap 0-3` in OS indices aborted with "CmiSetCPUAffinity failed to bind
+  PE #0 to PU P#0". On a partial-node cgroup use LOGICAL indices
+  (`+pemap L0-3`), which renumber within the allowed set — the opposite of
+  the full-node case in the validated-pemap section, where OS indices are
+  the correct choice.
