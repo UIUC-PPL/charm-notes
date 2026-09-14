@@ -2378,3 +2378,56 @@ buffer); and right after the IPC bootstrap the peer's segment can report
 exchange reaches it. Charm++'s `_tryIpcSend` tolerates that by falling back
 to a network send; a test must wait, bounded, and treat any other status as
 a failure.
+
+## Threads on shared queues need post-switch actions; install-by-message is not enough to retire a table (2026-09-13, reconverse, Argobots shim)
+
+Lessons from putting an Argobots-compatible layer on reconverse (Margo
+28/28, Thallium 24/24 in one day; `argobots-succession/RESULTS-SUMMARY.md`).
+
+- **A thread token may enter a queue polled by OTHER PEs only after the
+  thread is off its stack.** Classic `CthYield` is awaken-then-suspend,
+  which is safe only because the token goes to the awakener's own queue.
+  With shared pools a second PE can pop the token and resume a thread that
+  is still running. The fix is a per-PE "post-switch action" slot, drained
+  right after `jump_fcontext` returns in the resumed context (`CthSuspendThen`,
+  `CthSuspendBlocked`): yield pushes, blocked-state stores and lock releases
+  all belong there, exactly where Argobots puts them (`ythread.c` callbacks).
+  Pair it with a state machine (BLOCKED→READY by CAS) so one token is in at
+  most one queue.
+- **A PE's main thread must be resumed on its own PE.** `CthResumeSchedulingThread`
+  keeps per-PE standin bookkeeping; popping a main thread's token on another
+  PE displaces that PE's own main thread. Route it home, and if it must sit
+  in a shared FIFO for fairness, let the queue skip it on other PEs.
+- **Freeing what a scheduler table polls: the swap must happen before the
+  free can be observed.** A table install that travels as a message through
+  the PE's self queue lets one more sweep of the OLD table run; if the
+  installer then frees a pool the old table points at, that sweep pops freed
+  memory (Margo init cycles, failure rate growing with cycles). For an
+  install on the calling PE set the pending pointer directly; the swap is
+  still only at the loop top. Retire old tables on a per-PE list freed at
+  scheduler nesting depth 1, because standins nest scheduler loops.
+- **Fairness bugs look like ordering bugs in the consumer.** Margo's
+  monitoring test failed deterministically because the primary ULT's wake
+  jumped ahead of a handler woken earlier (it bypassed the pool FIFO via a
+  direct PE push). Native Argobots keeps the primary in pools[0]. When a
+  library test that passes natively fails on a new runtime, compare the
+  order of wakes, not just their presence.
+- **Idle waits must be woken by every path that can make the PE busy.** A
+  PE parked on a pool condvar misses messages to its Converse queues (table
+  installs, exits, the pinned primary's wake); `CsdIdleWait` parks on the
+  PE's own CmiIdleLock and pool pushes notify registered sleeper ranks. The
+  ungated version of that notify (touching every PE's lock on each node
+  push) cost 0.2 us per node message — gate on a count of enabled sleepers.
+- **Reconverse's 64-slot table sweep (PR #150) costs ~0.2 us on NodeGroup
+  messages** vs the old if/else scheduler, independent of slot weights or
+  polling the node queue first; bisected to the table itself. Unresolved;
+  suspect per-sweep `empty()` traffic on the shared multi-consumer queue.
+- **Statistical asserts in concurrency tests fail under machine load, not
+  because of the runtime.** "resumed on >= 2 PEs" and non-atomic counters
+  incremented by concurrently woken ULTs (Argobots' own eventual_timedwait)
+  both broke while agents were building Charm++ on the same 8 cores. Keep
+  such checks informational and assert only the deterministic property.
+- **Skeleton-first pays for a large C API**: generate every function as a
+  stub returning "feature unavailable" with a trace env var, so real
+  consumers (Margo, Thallium) name exactly what they need; 261 functions,
+  ~70 needed, 36 still stubs with three full application suites green.
