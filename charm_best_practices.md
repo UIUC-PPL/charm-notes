@@ -2431,3 +2431,26 @@ Lessons from putting an Argobots-compatible layer on reconverse (Margo
   stub returning "feature unavailable" with a trace env var, so real
   consumers (Margo, Thallium) name exactly what they need; 261 functions,
   ~70 needed, 36 still stubs with three full application suites green.
+
+## Node-wide spin waits must back off when PEs can outnumber cores (2026-09-14)
+
+Reconverse's `CmiNodeBarrier`, `ConverseExitParticipate` and
+`ConverseTeardown` waited by spinning on an atomic. That is fine with one
+core per PE (the only case Charm++ runs), and pathological the moment a
+process has more PEs than cores it may run on: a shared node's cgroup, a
+login node's per-user CPU quota, an oversubscribed launch. The spinners
+occupy every core, the PEs still arriving get a fair-share slice each, and
+each phase lasts as long as the OS needs to run every starved PE in turn,
+with all spinners burning CPU meanwhile. Measured on Anvil (128 PEs inside a
+32-core allocation, an Argobots-API library on reconverse): ~1.2 s and
+~30 CPU-s per process start-up+shutdown; 0.16 s and 2.4 CPU-s after adding a
+backoff (256 pure spins, then `sched_yield` per iteration to 4096, then
+`nanosleep(50 us)`; abt-pools branch 5a37438+b404fa3). A yield-only loop is
+not enough: it still accounts as system time.
+
+Diagnosis idioms that worked: `CMI_INIT_TRACE=1` (abt-pools 719bef2) prints
+per-PE phase timestamps for start-up/shutdown; `strace -f -k -e trace=futex`
+attributes futex calls to functions (strace >= 5.x); per-thread
+`/proc/PID/task/*/stat` ticks separate start-up burn from steady-state
+spin. On Anvil login nodes CPU-seconds are valid but wall times are not
+(per-user CPU quota ~2 cores; phase timestamps step in the CFS period).
