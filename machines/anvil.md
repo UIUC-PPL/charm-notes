@@ -50,6 +50,11 @@ Both hazards are written up below. Also available: `gcc/{8.4.1,10.2.0,14.2.0}`,
 `openmpi/{3.1.6,4.1.6}`. Only `hwloc/1.11.13` is offered (fine — reconverse
 has an explicit pre-2.0 API branch).
 
+For a CUDA build these two loads are not enough and this order does not work:
+the CUDA modules are invisible without `modtree/gpu`, which then downgrades
+gcc. See "Building charm with CUDA, and getting onto a GPU" below for the
+recipe.
+
 **No ninja on Anvil (2026-09-12).** `ninja` is not in `PATH` and no module
 provides it (`module -t avail ninja` prints nothing). Install it per user:
 
@@ -292,6 +297,85 @@ section used to carry is obsolete for this branch.
   mpirun-vs-srun section), plus `-DRECONVERSE_BUILD_TESTS=ON
   -DRECONVERSE_AUTOFETCH_LCI2=ON` (Hazards). Inside sbatch also
   `unset SLURM_CPUS_PER_TASK` and `export SLURM_CPU_BIND=none` (Slurm idioms).
+
+## Building charm with CUDA, and getting onto a GPU (2026-09-15)
+
+Verified building charm-on-reconverse with CUDA from a fresh clone of
+`reviewed-with-reconverse` and compiling the gpudirect examples against it
+(issue #3963 work, workspace
+`$PROJECT/$USER/software/gpudirect3963`, env recipe saved there as
+`env-cuda.sh`).
+
+**The module recipe in "Module toolchain" above is NOT sufficient for CUDA, and
+the load order there cannot work from a bare login.** `module load cuda/13.1.0`
+fails with "The following module(s) are unknown" under the default
+`modtree/cpu`: the CUDA modules exist only under `modtree/gpu`. Loading that
+tree then downgrades gcc 11.2.0 to 8.4.1, so gcc has to be reloaded on top of
+it. The order that works:
+
+    module load modtree/gpu
+    module load gcc/11.2.0      # modtree/gpu downgraded it to 8.4.1
+    module load python/3.9.5
+    module load hwloc
+    module unload cuda
+    module load cuda/13.1.0     # LAST, so hwloc's 11.4.2 does not win
+
+Without `modtree/gpu` the build dies in `contrib/reconverse/CMakeLists.txt`
+with "Could not find nvcc, please set CUDAToolkit_ROOT" — which reads like a
+missing toolkit and is a missing module tree. `$RCAC_HWLOC_ROOT` also resolves
+differently under `modtree/gpu` (an `anvilgpu` spack prefix,
+`/apps/spack/anvilgpu/apps/hwloc/1.11.13-gcc-11.2.0-...`); use the variable
+rather than a remembered path.
+
+The build itself is cheap — **5.5 minutes on a login node**, faster than the
+non-CUDA build timed in the quickstart section. `cuda` is a positional option
+word after the arch (charm's `buildcmake` maps it to `-DBUILD_CUDA=1`), and the
+build directory is named for it:
+
+    ./build charm++ reconverse-linux-x86_64 cuda -j8 --with-production \
+        --with-cmake-args="-DRECONVERSE_ENABLE_CPU_AFFINITY=ON \
+                           -DHWLOC_ROOT_DIR=$RCAC_HWLOC_ROOT"
+    # -> reconverse-linux-x86_64-cuda/
+
+Building the GPU examples from inside the build tree works and does test edited
+sources: the build-tree example directories hold **symlinks to the source
+files**, not copies. `CUDA_ARCH` defaults to `sm_80` in those Makefiles.
+
+    make -C <build>/examples/charm++/cuda/gpudirect/jacobi3d CUDA_ARCH=sm_80
+
+**Queue reality: GPUs are the scarce resource here, and `gpu-debug` does not
+protect you.** On 2026-09-15 all 52 GPUs on the 13 usable GPU nodes were
+allocated (g000 and g004 `down`, g010 `drain`, of 16 nodes at 4 GPUs each),
+`gpu-debug` had zero jobs RUNNING and 11 pending, and the `gpu` partition had
+~401 pending and absorbs each GPU as it frees. Slurm's estimated start for a
+1-node 2-GPU 25-minute `gpu-debug` job was **three days out** — it was
+backfilling to the edge of the `anvil-maint-2026-q3` reservation. The existing
+warning that a 13-node `mix` display means nothing is the weaker version of
+this: check `sinfo -p gpu,gpu-debug -o "%n %G %t"` and the GRES actually free,
+not the node states.
+
+GPU QOS caps, which are hard limits and not contention:
+
+| partition | max nodes/job | max wall | notes |
+|---|---|---|---|
+| `gpu-debug` | **1** | **00:30:00** | so no 2-node GPU job can go here; trim job scripts to fit 30 min |
+| `gpu` | 12 GPUs/user | 2 d | the only route to a multi-node GPU job (inter-host RDMA testing) |
+| `ai` | h000-h020, 21 nodes x 4 GPUs, 96 cores, 1 TB | — | **sm_90-class devices** — often has free GPUs when gpu/gpu-debug are saturated |
+
+The `ai` partition is a real fallback when the A100 partitions are full, but
+only after a rebuild: our example binaries are compiled `-arch=sm_80`, which
+embeds cubin and no PTX, so they will not launch on sm_90. Rebuild the
+application with `CUDA_ARCH=sm_90` (charm itself does not need it — hybridapi
+and libck call the CUDA runtime API from C++ and contain no device code), and
+confirm with `cuobjdump --list-elf <binary>` before queueing. Stage the sm_90
+binaries somewhere separate if sm_80 jobs are still queued against the same
+paths.
+
+Also still true and worth restating because it is the first thing to go wrong:
+GPU jobs need **`-A asc050025-gpu`** (the base allocation's QOS is DenyQos on
+the GPU partitions) and an explicit **`--cpus-per-task`**, or the step cpuset is
+one core and any `+pe N>1` run aborts with "Multiple PEs assigned to same
+core".
 
 ## Cluster-finding stack (paratreet2 / unionfind / htram)
 
@@ -651,7 +735,9 @@ on a login shell. All of it was hit in practice.
   cpuset, so any `+pe N>1` GPU job needs `--cpus-per-task=<enough>` (e.g. 8).
   Classic charmrun multi-process runs don't trip the same check, which can
   mislead A/B comparisons.
-- **`module load hwloc` silently swaps CUDA 13.1.0 -> 11.4.2** (2026-08-28):
+- **`module load hwloc` silently swaps CUDA 13.1.0 -> 11.4.2** (2026-08-28;
+  the full CUDA recipe, including the `modtree/gpu` prerequisite this entry
+  omits, is in the CUDA build section above):
   hwloc/1.11.13 pulls cuda/11.4.2 as a dependency, and a later
   find_package(CUDAToolkit) then resolves 11.4.2 — which lacks post-11.7
   APIs (cuMemGetHandleForAddressRange, DMA_BUF), breaking LCI's CUDA
