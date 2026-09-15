@@ -360,16 +360,37 @@ GPU QOS caps, which are hard limits and not contention:
 |---|---|---|---|
 | `gpu-debug` | **1** | **00:30:00** | so no 2-node GPU job can go here; trim job scripts to fit 30 min |
 | `gpu` | 12 GPUs/user | 2 d | the only route to a multi-node GPU job (inter-host RDMA testing) |
-| `ai` | h000-h020, 21 nodes x 4 GPUs, 96 cores, 1 TB | — | **sm_90-class devices** — often has free GPUs when gpu/gpu-debug are saturated |
+| `ai` | H100 / sm_90 nodes | 2 d (QOS `part-ai`) | **NOT submittable by this allocation** — see below; do not plan around it |
 
-The `ai` partition is a real fallback when the A100 partitions are full, but
-only after a rebuild: our example binaries are compiled `-arch=sm_80`, which
-embeds cubin and no PTX, so they will not launch on sm_90. Rebuild the
-application with `CUDA_ARCH=sm_90` (charm itself does not need it — hybridapi
-and libck call the CUDA runtime API from C++ and contain no device code), and
-confirm with `cuobjdump --list-elf <binary>` before queueing. Stage the sm_90
-binaries somewhere separate if sm_80 jobs are still queued against the same
-paths.
+**`ai` is not a fallback for us — it cannot be submitted to at all** (checked
+2026-09-15, rejected both ways):
+
+    sbatch -A asc050025-gpu -p ai   -> "You are submitting a job to a non-gpu
+                                        partition while using a gpu allocation.
+                                        Please use --partition=gpu. This job
+                                        has been rejected."
+    sbatch -A asc050025     -p ai   -> "Invalid qos specification"
+
+A site submit filter pins the gpu allocation to `gpu`/`gpu-debug`, and the base
+account's `cpu` QOS is in `ai`'s `DenyQos`. `scontrol show partition ai`
+reports `AllowAccounts=ALL`, which is misleading — the submit filter and
+`DenyQos` decide, so do not read AllowAccounts as access.
+`sacctmgr show assoc user=x-lkale` gives exactly two associations,
+`asc050025-gpu` (QOS `gpu`) and `asc050025` (QOS `cpu`), and neither reaches
+`ai`. When `gpu` and `gpu-debug` are both saturated there is therefore no
+in-house alternative: queue and wait, or use another machine. Do not spend a
+session rebuilding for `ai`.
+
+Recorded in case access is ever arranged: `ai` is h[000-020], 21 nodes,
+`ActiveFeatures=H,h,H100`, 4 GPUs / 96 cores / 1031 GB per node, with
+`DefMemPerGPU=240000` — so the default memory request cannot be placed on a
+node whose GPUs are partly allocated and an explicit small `--mem` is needed.
+A rebuild would also be required, but only for programs that contain kernels:
+a binary built `-arch=sm_80` embeds cubin and no PTX and will not launch on
+sm_90. The gpudirect `latency` benchmark has no device code at all
+(`cuobjdump --list-elf` says so) because it only calls the CUDA runtime API,
+so it is arch-independent; charm itself likewise never needs the rebuild,
+since hybridapi and libck contain no device code either.
 
 Also still true and worth restating because it is the first thing to go wrong:
 GPU jobs need **`-A asc050025-gpu`** (the base allocation's QOS is DenyQos on
