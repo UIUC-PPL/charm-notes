@@ -31,15 +31,11 @@ project status out of this file; it belongs in per-project memory.
 ## Remote sites reachable from this laptop (ssh aliases in ~/.ssh/config)
 
 - `anvil` (Purdue, user x-lkale, key auth; agents can ssh freely).
-- `delta` (NCSA, user lkale, added 2026-09-15): Duo two-factor on every
-  new connection, so the `Host delta login.delta.ncsa.illinois.edu` block
-  uses ControlMaster/ControlPersist 12h. Kale opens the master once with an
-  interactive `ssh delta` in a Terminal window (the `!` shell has no TTY
-  for Duo); agents then reuse it non-interactively. Check with
-  `ssh -O check delta`; when it reports no master, ask Kale to log in
-  again -- never attempt Duo from an agent. Site details in `delta.md`.
-- Frontier (OLCF): RSA fob, connection sharing DISABLED site-wide; work
-  happens inside one authenticated tmux session there. See `frontier.md`.
+- `delta` (NCSA, user lkale, added 2026-09-15). The config block follows
+  the connection-sharing recipe in `delta.md`; on this laptop the master
+  must be opened from a Terminal window, because the `!` shell in a Claude
+  session has no TTY for the Duo prompt.
+- Frontier (OLCF): see `frontier.md`; this laptop has no alias for it.
 
 ## Shells (surprising — checked 2026-07-26)
 
