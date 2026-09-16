@@ -102,6 +102,26 @@ shell and every batch script; `module` is not defined in a non-login shell, so
 guard it with
 `[ -z "$LMOD_CMD" ] && source /usr/share/lmod/lmod/init/bash`.
 
+## Standalone reconverse build: ask for the LCI backend explicitly
+
+Configuring reconverse on its own (not through charm's `./build`) with just
+
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+builds it with **no LCI backend** on Delta. `RECONVERSE_TRY_ENABLE_COMM_LCI2`
+is ON by default, but LCI2 is not installed site wide and
+`RECONVERSE_AUTOFETCH_LCI2` defaults to OFF, so the LCIv2 backend is skipped
+without an error. Every rank then initializes as its own one-process job and
+all multi-process tests pass vacuously — the same false pass as the
+`--mpi=pmi2` trap below, from a different cause. Configure instead with
+
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+          -DRECONVERSE_AUTOFETCH_LCI2=ON
+
+and confirm the startup banner reports the expected process count
+(`Reconverse> Starting Reconverse with N processes`) before believing any
+multi-process result. Observed 2026-09-16; it invalidated job 22124061.
+
 ## The launcher trap: use `--mpi=pmix`, not `--mpi=pmi2`
 
 **`srun --mpi=pmi2` does not bootstrap a multi-process reconverse job on
@@ -119,6 +139,10 @@ pmix plugin the site's `libpmix` still initializes as a singleton of size 1.
 `PMIX ERROR: PMIX_ERR_FILE_OPEN_FAILURE in file gds_shmem2.c at line 1056`;
 they are not a failure. Always confirm the "N processes" line before believing
 a multi-process result. `srun --mpi=list` gives `none pmix pmi2 cray_shasta`.
+
+charm's `tests/reconverse-site-run.sh` on the reviewed line now defaults
+`SITE=delta` to `srun --mpi=pmix` (PR #3982, merged 2026-09-16), so
+`LAUNCHER=` no longer has to be set there.
 
 Unlike Frontier, Delta does **not** need `--network=single_node_vni`:
 single-node steps under the cxi provider work without it.
@@ -153,3 +177,11 @@ flushed instead of silently eating the whole allocation. A step that asks for
 fewer nodes or tasks than the allocation is fine, so one allocation can hold
 both a 1-node and a 2-node shape (allocate `-N 2 --ntasks-per-node=2
 --gpus-per-node=2` and use `srun -N 1 -n 2` / `srun -N 2 --ntasks-per-node=1`).
+
+**Reconverse's own ctest suite does not run inside an allocation.** It
+launches its single-process tests as bare binaries, with no `srun`, and
+inside a Slurm allocation those hang: LCI bootstraps from the inherited job
+environment and waits for peers that never start. Split the suite — run the
+bare-binary single-process tests on the login node and only the
+`srun`-launched multi-process ones inside an allocation. Observed 2026-09-16
+(job 22125300 hung this way).
