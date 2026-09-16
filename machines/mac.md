@@ -28,6 +28,19 @@ project status out of this file; it belongs in per-project memory.
 - `gh` is authenticated as `lvkale`, with push rights to
   charmplusplus/charm and the UIUC-PPL organization repositories.
 
+## Remote sites reachable from this laptop (ssh aliases in ~/.ssh/config)
+
+- `anvil` (Purdue, user x-lkale, key auth; agents can ssh freely).
+- `delta` (NCSA, user lkale, added 2026-09-15): Duo two-factor on every
+  new connection, so the `Host delta login.delta.ncsa.illinois.edu` block
+  uses ControlMaster/ControlPersist 12h. Kale opens the master once with an
+  interactive `ssh delta` in a Terminal window (the `!` shell has no TTY
+  for Duo); agents then reuse it non-interactively. Check with
+  `ssh -O check delta`; when it reports no master, ask Kale to log in
+  again -- never attempt Duo from an agent. Site details in `delta.md`.
+- Frontier (OLCF): RSA fob, connection sharing DISABLED site-wide; work
+  happens inside one authenticated tmux session there. See `frontier.md`.
+
 ## Shells (surprising — checked 2026-07-26)
 
 - Account login shell is `/bin/zsh`, BUT Terminal.app has a preference
