@@ -2603,10 +2603,9 @@ included); when a multi-process run hangs with no banner,
 in a loop of runs, clean the directory between iterations rather than after
 the first failure. Seen as an intermittent macOS-CI hang in charm #3987
 (`lcrun -n 2 ./megatest +pe 4` produced no output for 69 minutes, one orphan
-process on cleanup). Filed upstream against `uiuc-hpc/lci` on 2026-09-17; the
-issue number was not yet assigned when this was written --
-`gh issue list -R uiuc-hpc/lci --search "lct_pmi_file"` finds it (newest
-issues there at the time were #199-#201).
+process on cleanup). Filed upstream as uiuc-hpc/lci#202 (2026-09-17); charm's
+CI now removes the directory before each `lcrun` step and bounds the step with
+a timeout (charm PR #3986).
 
 ## Charm++-on-reconverse interface lessons (2026-09-16/17)
 
