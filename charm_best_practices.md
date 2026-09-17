@@ -2554,3 +2554,112 @@ Related: this reconverse accepts exactly one run-size flag. `+pe N +ppn M`
 together is rejected before any application code runs ("only one of +pe,
 +ppn and +p may be specified"). Two processes with one PE each is `+ppn 1`;
 `+pe` is the total across processes.
+
+### The same trap on Delta, and where to put the gate (2026-09-17, #3982)
+
+Not a Frontier quirk. On Delta, `srun --mpi=pmi2` does exactly the same
+thing -- N independent one-process jobs, rc 0, every multi-process test
+"passing" vacuously; Delta needs `srun --mpi=pmix`, and Frontier needs plain
+`srun` (its cray_shasta default), so the launcher flag is a per-site
+property and no single default is right. The per-site launcher defaults now
+live in `reconverse-site-run` (charm #3982).
+
+The gate is one grep, and it belongs in the harness rather than in a human's
+reading of the log: a multi-process result counts only if the output contains
+`Starting Reconverse with <N> process` for the N that was asked for. Apply it
+before quoting any multi-process pass -- including passes from a tier that
+has "been green for days".
+
+## lcrun bootstraps through one shared directory per machine, and a dead run poisons it (2026-09-17)
+
+`lcrun` does not carry its own process manager: it sets
+`LCT_PMI_BACKEND=file,local` (lcrun:11-13) and lets LCT's file backend
+rendezvous through a directory on disk. The directory name is fixed per user
+and job, not per run: `$HOME/.tmp/lct_pmi_file-<SLURM_JOBID>`, with jobid 0
+outside Slurm (`lct/pmi/pmi_wrapper_file.cpp:87-100` in the LCI source under
+`<build>/_deps/lci-src`). Inside it, `nranks` is a counter file: each process
+takes the current value as its rank and writes value+1 under `flock`, the
+last rank (rank == nranks-1) resets the file to `0` **after releasing the
+lock**, and every other rank polls that file at 500 ms until it reads `0`
+(`:190-240`).
+
+Consequences, all of which look like runtime bugs:
+
+- A run that dies between "took a rank" and "last rank reset the counter"
+  leaves a nonzero counter behind. The next launch's first process is
+  assigned a rank at or above nranks and aborts with
+  `Rank N is greater than the number of ranks M. Remove the <dir> and try
+  again`, or -- when the leftover count is small enough to stay in range --
+  every process waits forever for a reset that the missing rank will never
+  do, producing **no output at all, not even the `Starting Reconverse`
+  banner**. Silence before the banner is the signature.
+- Two `lcrun` jobs on one machine at one time share the directory (same HOME,
+  same or absent SLURM_JOBID) and interleave in the same counter, so both
+  mis-rank. This is a machine-wide mutex, not a per-shell one.
+
+Rules: never run two `lcrun` launches concurrently on a machine (a CI runner
+included); when a multi-process run hangs with no banner,
+`rm -rf ~/.tmp/lct_pmi_file-*` and retry before debugging anything else; and
+in a loop of runs, clean the directory between iterations rather than after
+the first failure. Seen as an intermittent macOS-CI hang in charm #3987
+(`lcrun -n 2 ./megatest +pe 4` produced no output for 69 minutes, one orphan
+process on cleanup). Filed upstream against `uiuc-hpc/lci` on 2026-09-17; the
+issue number was not yet assigned when this was written --
+`gh issue list -R uiuc-hpc/lci --search "lct_pmi_file"` finds it (newest
+issues there at the time were #199-#201).
+
+## Charm++-on-reconverse interface lessons (2026-09-16/17)
+
+Four defects from one week, all at the seam between the two code bases, all
+invisible in the configuration people run most.
+
+- **Never redeclare a function reconverse defines; include its header.**
+  `charm/src/util/cmirdmautils.h:65` carried charm's own declaration of
+  `setNcpyOpInfo` with 24 parameters while reconverse's definition
+  (`contrib/reconverse/include/cmirdmautils.h:103`) had 25. Both are
+  `extern "C"`, so there is no mangling to disagree about: it linked, and the
+  callee read stack garbage as the missing trailing argument,
+  `deviceRdmaOpInfo`. Only CUDA builds read that field -- it routes zerocopy
+  acks -- so non-CUDA builds were clean and CUDA builds sent host acks to the
+  device handler (charm #3983, fixed by #3984). Two rules: a duplicated
+  declaration of another project's `extern "C"` function is a latent ABI bug
+  even while it works, and when a symptom appears only on CUDA builds, look
+  first for a struct field that only the CUDA path reads.
+- **`swapHandlerId` is the extended-handler slot (`CmiSetXHandler`), not
+  scratch space.** The seed balancer parks the user's real handler there
+  (`CldSwitchHandler`) on every message it list-sends, and the SPANTREE
+  broadcast uses it too. Borrowing it to carry new protocol state hung
+  `cld-multinode` -- the first attempt at reconverse PR #238. Carry protocol
+  metadata in a trailer or preamble of your own message, and validate against
+  the whole ctest suite, not just the test that motivated the change.
+- **On the zerocopy post API the transfer length is
+  `min(srcSize, destSize)`, never `srcSize`.** The receiver is allowed to
+  post a smaller buffer than the sender offered. Reconverse's RMA path used
+  `srcSize`, which on a provider with a registration cache (Slingshot/cxi)
+  wrote past the posted region and surfaced as heap corruption somewhere
+  unrelated, and on a range-checking provider (Anvil ibv) failed the
+  completion and hung the peer (reconverse #223). General form: when one test
+  "fails differently on different machines", suspect an out-of-bounds
+  transfer that one provider checks and the other silently permits -- the
+  divergence is the checking, not the bug.
+- **On the device post API's RDMA path the pointer the entry method receives
+  is the sender's**, not the buffer the receiver posted, until charm #3981
+  lands. Unpack from your own posted buffer; treat the entry method's pointer
+  argument as meaningless there. Single-process runs cannot show this,
+  because the sender's address is valid in the same address space (charm
+  #3980 / #3981) -- another case where the cheap configuration is the one
+  that hides the defect.
+
+## Test and review discipline that paid off (2026-09-16/17)
+
+- **Before merging a dependency-pin bump, run the failing tests against the
+  previous pin.** Of four Anvil failures on a reconverse pin bump, three
+  reproduced on the old pin and were pre-existing; only the fourth was the
+  bump's. Without the baseline run the bump looks like the cause of all four,
+  and at least one merge decision changes on that classification alone. The
+  baseline run costs one allocation.
+- **Read a diff with context, not as a list of `+`/`-` lines.** A grep of
+  changed lines alone made a correct hunk in charm #3938 look like a bug: the
+  lines that established it was correct were unchanged context the grep
+  dropped. Use `git show`/`git diff -U20` or the PR's file view before
+  writing a review comment about a hunk.
