@@ -2520,3 +2520,37 @@ daos/DAOS-STEP4*.md).
   across builds, so instructions mapped to time -- until a change made the
   remaining work stall-bound (Ir/ns 4.2), which is how the standin leak
   announced itself before the RSS did.
+
+## A launcher that "works" may be giving you N independent one-process jobs: gate on the process-count readback (2026-09-17, Frontier)
+
+Observed on Frontier (Slurm, Cray Shasta, reconverse/LCI) while validating a
+two-process GPU-direct example. `srun --mpi=pmi2 -n 2 ./app +ppn 1` returned
+rc 0 on a tiny program, and a whole regression tier launched that way had
+"passed" on 1 and 2 nodes four days earlier. But every task had started as its
+own job: the startup banner `Starting Reconverse with 1 process, 1 PE` was
+printed once PER TASK, never `with 2 processes`. Programs that demand a PE
+count exposed it at once (`verify`: "Should be run with 2 PEs"; the latency
+benchmark: "there should be 2 PEs"), and a size-flag error printed twice
+because every rank believed it was rank 0. Programs that are happy alone
+passed, twice, which is how 191 tier runs went by unnoticed. Plain `srun`
+(the site's cray_shasta default) formed the two-process job on the first try,
+on one node and across two.
+
+Why: the runtime's PMI shim tries backends in a fixed order and takes the
+first that initialises; here that was a PMI2 client linked against the
+vendor's libpmi2, which initialised fine under Slurm's generic pmi2 plugin
+and reported a world of size 1. Nothing failed, so nothing said anything.
+
+The rule: for every multi-process launch, gate on the runtime's own
+process-count readback, not on the exit code and not on the launcher flag.
+For reconverse that is one grep of the job output for
+`Starting Reconverse with <N> process` with the N you asked for, present
+exactly once. Put that grep in the site-run script's per-step check and in
+any job script whose result you intend to quote. This is the same
+"gate on the artifact, not on the intent" discipline as the affinity readback
+and the `ldd | grep 'not found'` loader gate, applied one layer earlier.
+
+Related: this reconverse accepts exactly one run-size flag. `+pe N +ppn M`
+together is rejected before any application code runs ("only one of +pe,
++ppn and +p may be specified"). Two processes with one PE each is `+ppn 1`;
+`+pe` is the total across processes.

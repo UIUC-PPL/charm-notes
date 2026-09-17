@@ -567,6 +567,35 @@ at the wrong operating point).
   are ORTHOGONAL in buildcmake — an optimized runtime CAN trace; use
   that for traced-but-honest runs (~3% cost, relay65).
 
+## Launcher: plain `srun`, never `--mpi=pmi2` (2026-09-17, GPU validation of charm PR 3980)
+
+Measured in-job on the real binary (`jacobi3d -n 2 +ppn 1`, HIP build of
+reviewed-with-reconverse 0130de232 / reconverse 58921e9), on one node and
+across two nodes, jobs 5495903 and 5495904:
+
+    srun                     -> Reconverse> Starting Reconverse with 2 processes, 2 PEs   OK
+    srun --mpi=cray_shasta   -> Reconverse> Starting Reconverse with 2 processes, 2 PEs   OK
+    srun --mpi=pmi2          -> "Starting Reconverse with 1 process, 1 PE" printed TWICE  NOT a job
+
+Under `--mpi=pmi2` the ranks never join. Symptoms downstream, all misleading:
+`verify` aborts "Should be run with 2 PEs", the latency benchmark exits "there
+should be 2 PEs", a size-flag error prints once per task (every task believes
+it is rank 0), and any test that is happy alone simply passes twice. The
+build's LCT PMI order is pmix;pmi2;pmi1 (pmix not compiled) with the pmi2
+wrapper linked against Cray libpmi2 6.1.15, which evidently reports size 1
+under Slurm's pmi2 plugin. The campaign's 8- to 1024-process runs on this
+machine always used plain `srun`, which is why the problem never showed there.
+
+GATE EVERY MULTI-PROCESS RUN ON THE READBACK: the job output must contain
+`Starting Reconverse with <N> process` for the N you launched, exactly once.
+A launcher that "works" without that line has given you N copies of a
+one-process run. Add it to the site-run script's per-step check.
+
+Also from the same runs: this reconverse accepts exactly ONE size flag.
+`+pe 2 +ppn 1` is rejected ("only one of +pe, +ppn and +p may be specified",
+exit 1 before any application code). Two processes with one PE each is
+`+ppn 1` alone.
+
 ## Charm++ reconverse test tier via tests/reconverse-site-run.sh (2026-09-13)
 
 First Frontier run of the committed site script (charm #3975), on
@@ -610,7 +639,10 @@ reconverse launch idiom). The tree is 527 MB built.
         tests/reconverse-site-run.sh 2>&1 | tee results/siterun-1node.out
 
 Whole tier (13 directories, 26 runs, including compiling megatest) took 2:57
-on one node and 0:41 on two nodes. The frontier case sets `FI_PROVIDER=cxi`,
+on one node and 0:41 on two nodes. WARNING (2026-09-17): as run, every
+multi-process case was N independent single-process jobs — the script's
+`--mpi=pmi2` default does not join ranks here; see "Launcher: plain srun".
+The frontier case sets `FI_PROVIDER=cxi`,
 `LCI_NETWORK_BACKENDS=ofi`, `PMI_MAX_KVS_ENTRIES=1000` and appends
 `--network=single_node_vni` to both launcher argument sets; the script's
 raised defaults (`-N1 -c8` single, `-N1 -c4` two-on-one-node,
@@ -623,13 +655,25 @@ Do not run two instances against one tree at once: each directory's
 
 ### Launcher facts, all measured in-job with simplearrayhello (+pe 4)
 
-- `srun --mpi=pmi2` (the script's default launcher) WORKS on Frontier, and so
-  does plain `srun` (cray_shasta plugin). `srun --mpi=list` offers none, pmi2,
-  cray_shasta. No launcher override is needed for SITE=frontier.
+- RETRACTED 2026-09-17: this bullet said `srun --mpi=pmi2` (the script's
+  default launcher) "WORKS" on Frontier. It launches, but it does NOT form a
+  multi-process reconverse job: every task starts as its own 1-process job.
+  See "Launcher: plain srun, never --mpi=pmi2" above. Every "2-process" and
+  "2-node" case of the 2026-09-13 tier therefore ran as two independent
+  single-process copies (191 "Starting Reconverse" lines in the site-*.out
+  files, all "with 1 process"; a -n 2 step shows the line twice). The tier's
+  PASS is real only for the single-process shape. The site-run script's
+  frontier case needs its launcher set to plain `srun` and the tier rerun.
+  What remains true: `srun --mpi=list` offers none, cray_shasta, pmi2;
+  cray_shasta is the default.
 - CORRECTION to "Multi-node keeps job_vni" (Verified 2026-08-12 section): a
   two-node step needs no network flag at all (default rc=0), and
   `--network=single_node_vni` is ACCEPTED on multi-node steps — 2 nodes x 1 task
   and 2 x 2 tasks both completed with it, alone or as `job_vni,single_node_vni`.
+  (Those steps were `--mpi=pmi2`, so each task was its own job — see the
+  retraction above. RECONFIRMED 2026-09-17 with a REAL two-node job: plain
+  `srun --network=single_node_vni -N 2 --ntasks-per-node=1 -n 2` printed
+  "with 2 processes" and the inter-node RDMA-get runs passed, job 5495904.)
   What is still true: a step that lands on ONE node aborts without it, in LCI
   rather than with a readable libfabric message:
 
