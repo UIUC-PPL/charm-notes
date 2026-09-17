@@ -2454,3 +2454,69 @@ attributes futex calls to functions (strace >= 5.x); per-thread
 `/proc/PID/task/*/stat` ticks separate start-up burn from steady-state
 spin. On Anvil login nodes CPU-seconds are valid but wall times are not
 (per-user CPU quota ~2 cores; phase timestamps step in the CFS period).
+
+## Lessons from the Argobots-on-Reconverse pilot (2026-09-15/16, Kale + Claude)
+
+Context: the shim `charmplusplus/abt-reconverse` runs Mochi and the DAOS
+engine on Reconverse (branch `abt-pools`). Per-ULT dispatch went from 8x
+slower than Argobots to 2.5x in a week; each item below was found by
+measurement (callgrind instruction counts per yield) and verified on Anvil.
+Reports live in `~/software/argobots-succession/` (DISPATCH-LADDER.md,
+daos/DAOS-STEP4*.md).
+
+- **Thread-locals in a shared library cost a resolver call per access.**
+  Reconverse's Cpv variables are `__thread`; compiled into a `.so` with the
+  default TLS model, every `CpvAccess` became a `__tls_get_addr` call: 38
+  calls per ULT yield, 37% of the dispatch cost. `-ftls-model=initial-exec`
+  (CMake `RECONVERSE_TLS_MODEL`) turns each into one `%fs` load. Constraint:
+  the library must be loaded at program start; a dlopen'ed library with
+  initial-exec TLS fails when the static-TLS surplus (glibc: 1.6 KB) is
+  smaller than the TLS block (reconverse: 23 KB). Statically linked
+  Converse executables never had this cost.
+- **`CmiInitHwlocTopology` loaded the hwloc topology twice**, 50-70 ms each
+  on a 128-core node, the second only to count PUs disallowed by the cgroup.
+  The root's complete cpuset carries that count. Half of every process
+  start on a big node, for Charm++ too. Fixed on `abt-pools` (36404cf).
+- **Scheduler sweep locality.** The 64-slot poll table swept from a
+  rotating base after every unit, so a busy queue paid the empty polls of
+  the runtime's other queues, the `CcdSCHEDLOOP` raise and the periodic
+  clock read once per unit (~68 ns). Re-polling the productive slot up to
+  K=16 times amortizes that; Charm++ pingpong's NodeGroup phases, slower
+  since the table was introduced (880f57c), came back 2.7x. Two rules that
+  the test suites forced: never re-poll while a table install is pending
+  (the installer may free what the slot polls, trusting the loop-top swap);
+  and K counts units, not time -- an entry whose units can block for long
+  (Margo's progress ULT: 100 ms in Mercury) must apply its own policy
+  across its queues inside one poll function, or a lower-priority queue's
+  long unit starves the others for K units. Register only the runtime
+  queues a PE can receive (`CsdSchedTableCreateEx` builtin mask).
+- **Direct ULT-to-ULT switch (yield-to-next).** Implemented in the shim's
+  choose function (the hook `CthSetStrategy` has had since the beginning):
+  pop the next unit on the suspending thread's stack, `CthResume` it, let
+  the suspending thread's own push run post-switch. No Cth API change
+  beyond `CthClaimReady` (READY->RUNNING with the double-pop check). Three
+  units must be parked instead of switched to, never pushed back (a second
+  pop may return something else): stackless tasklets (they run on the
+  scheduler's stack), any PE-main thread (its token handler
+  `CthResumeSchedulingThread` manages the scheduler standins; a direct
+  resume left the standin un-parked and every later suspend of the main
+  thread created a fresh 256 KB standin -- 1 GB/s of RSS), and, for a
+  merely yielding ULT, units from lower-priority pools (the yielder is
+  READY but not yet back in its pool; Argobots would run it again).
+- **A user-provided constructor turns off value-initialization.** Adding a
+  constructor to a struct that was previously `new T()`-zeroed left every
+  member without an initializer indeterminate; fresh heap memory hid it,
+  recycled memory (a free list) exposed it as segfaults in `make_fcontext`.
+  Give every member an initializer.
+- **Per-PE free lists must return objects to the allocating PE.** A ULT
+  created on PE 0 and freed on PE k drained PE 0's cache and overflowed
+  PE k's into `free()`; glibc's arena locks then showed as ~57k futex
+  calls/s. A lock-free per-rank return stack fixed it (reconverse 56ff69e).
+- **Spinlock vs std::mutex.** Under contention `std::mutex` parks
+  contenders (futex), a plain spin keeps them all on one line; a spinlock
+  with bounded exponential backoff was 5x the plain spin at 4 contenders.
+- **Measure per instruction, not per guess.** Two fixed-iteration callgrind
+  runs differenced give exact Ir/yield; Ir/ns on this code stayed near 6
+  across builds, so instructions mapped to time -- until a change made the
+  remaining work stall-bound (Ir/ns 4.2), which is how the standin leak
+  announced itself before the RSS did.
