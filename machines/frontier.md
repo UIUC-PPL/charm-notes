@@ -666,6 +666,11 @@ Do not run two instances against one tree at once: each directory's
   frontier case needs its launcher set to plain `srun` and the tier rerun.
   What remains true: `srun --mpi=list` offers none, cray_shasta, pmi2;
   cray_shasta is the default.
+  FIXED 2026-09-17: the script's `frontier)` case now sets
+  `SITE_LAUNCHER="srun"` (charm sync PR #3986, commit b67a31d29), so a fresh
+  checkout no longer inherits the `--mpi=pmi2` default. The `frontier` case
+  keeps its `--network=single_node_vni` handling unchanged. The 09-13 tier
+  still needs rerunning with that commit.
 - CORRECTION to "Multi-node keeps job_vni" (Verified 2026-08-12 section): a
   two-node step needs no network flag at all (default rc=0), and
   `--network=single_node_vni` is ACCEPTED on multi-node steps — 2 nodes x 1 task
