@@ -2662,3 +2662,38 @@ invisible in the configuration people run most.
   lines that established it was correct were unchanged context the grep
   dropped. Use `git show`/`git diff -U20` or the PR's file view before
   writing a review comment about a hunk.
+
+## Two ways a green run lies: srun exit 0 with a crashed task, and an uninitialised bool that takes both branches (2026-09-17, Frontier)
+
+Both from one day of running the reconverse test tier on Frontier.
+
+**srun returned 0 while one task had segfaulted.** A two-process run of a small
+Charm++ test (2 nodes, 1 process each) printed `srun: error: ... task 1:
+Segmentation fault` plus a full signal backtrace, and the `srun` command still
+exited 0 — the crash came AFTER rank 0 had exited normally and Slurm was
+already tearing the step down. A loop that classified repetitions by exit code
+reported 57 clean out of 100 while every kept output showed the crash; the true
+rate was at least 43%. Count crash signatures in the output (`Caught signal`,
+`srun: error:`, `Reason:`), keep every output until the count is done, and
+treat the exit code as a lower bound. This is the same "gate on the artifact"
+rule as the process-count banner (previous entry) applied to the other end of
+the run.
+
+**An uninitialised `bool` made both `if(b)` and `if(!b)` true.** A test's
+nodegroup class had a `bool evenElement` that its sibling array and group
+classes set in their constructors and it did not. The handler ran
+`if(evenElement) postLater(); if(!evenElement) postNow();`, which reads as
+exactly one post. g++ assumes a bool holds 0 or 1 and compiles the two tests as
+`byte != 0` and `(byte ^ 1) != 0`; with a garbage byte such as 0x5a both are
+true, the buffer was posted twice, the runtime delivered the receive twice, and
+the second delivery double-freed the destination buffer ("free(): double free
+detected in tcache 2", or a SIGSEGV when the corruption landed elsewhere).
+The identical binary had passed four days earlier and failed 20/20 after the
+site updated its software stack: a different hwloc loaded into the process
+changed the heap garbage under the flag. It passed on two other machines for
+the same non-reason. Symptoms that point here: a double free or "double
+delivery" that is deterministic on one machine and absent on another, that
+changed with an environment update and not with any code change, and whose
+backtrace is inside the application's own entry method. Initialise every
+member in every constructor; where a flag selects between two actions, write
+`if (b) a(); else c();` so the compiler cannot run both.
