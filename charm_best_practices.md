@@ -2697,3 +2697,49 @@ changed with an environment update and not with any code change, and whose
 backtrace is inside the application's own entry method. Initialise every
 member in every constructor; where a flag selects between two actions, write
 `if (b) a(); else c();` so the compiler cannot run both.
+
+## Per-chare `srand(f(thisIndex))` does not give random data (2026-09-22, macOS)
+
+Seeding each chare array element from its own index is the obvious way to
+generate independent test data, and on macOS it does not work: `rand()` is a
+weak LCG whose whole output stream is an affine function of the seed, so the
+n-th value of every element comes out as a linear function of the index.
+
+Measured (`srand(i*7919+13)`, then the 1st / 6th / 11th `rand()/RAND_MAX`,
+i = 0..5):
+
+```
+1st  : 0.0001 0.0621 0.1241 0.1860 0.2480 0.3100
+6th  : 0.8465 0.7843 0.7221 0.6599 0.5977 0.5355
+11th : 0.9855 0.9385 0.8914 0.8444 0.7973 0.7503
+```
+
+Exact arithmetic progressions at every depth — discarding outputs does not
+decorrelate. Plain `srand(i)` then one `rand()` is worse: 0.2426 for i=0 and
+**0.0000 for i = 1..5**.
+
+Consequences seen in practice: a one-value-per-element array comes out
+already sorted, so an argmax test always finds its answer at the same end;
+a k-means point cloud seeded this way is a set of parallel structures rather
+than an independent sample (`srand(thisIndex*1234567)`: the first point's
+y-coordinate across chares runs 0.0135, 0.2125, 0.4250, 0.6375, 0.8500).
+
+Fix: seed a real generator with a mixed hash of the index, not the index.
+
+```cpp
+static uint32_t mix(uint32_t i) {          // splitmix64, truncated
+  uint64_t z = (uint64_t)i + 0x9E3779B97F4A7C15ULL;
+  z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+  z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+  return (uint32_t)(z ^ (z >> 31));
+}
+std::mt19937 g(mix(thisIndex));
+```
+
+Verified unbiased: counting descents over the first draw of
+`mt19937(mix(i))` gives 500,208 for n = 1,000,000 against an expected
+499,999.5 (ratio 1.0004).
+
+This matters most for migration/LB tests, where per-element data is supposed
+to be uncorrelated and any hidden linear structure makes the imbalance
+synthetic in a way that is easy to mistake for a real result.

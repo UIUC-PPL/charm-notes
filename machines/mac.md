@@ -60,11 +60,29 @@ project status out of this file; it belongs in per-project memory.
 
 | Path | Runtime | Purpose |
 |---|---|---|
-| `~/software/clusterFinding/charm` (build `netlrts-darwin-arm8-smp`) | classic Converse, mainline main | paratreet2 laptop builds (`CHARM_HOME` points at the build dir) |
+| `~/software/clusterFinding/charm` (build `netlrts-darwin-arm8-smp`) | classic Converse, mainline main | paratreet2 laptop builds (`CHARM_HOME` points at the build dir). **MIXED — see warning below; benchmark against the build dir, not this path.** |
 | `~/software/recharm/charm` (build `reconverse-darwin-arm8`) | reconverse, branch `reviewed-with-reconverse` (switched 2026-09-13 from the stale `reconverse-specific-build`; reconverse is the `contrib/reconverse` submodule, pinned `58921e9`). The `reconverse-darwin-arm8` build dir on disk predates the switch and needs a rebuild before use. Coverage work lives in the separate worktree `~/software/recharm/coverage/charm-wt` | local reconverse testing on the reviewed line |
 | `~/software/seedbalancing/charm` (build `reconverse-darwin-arm8`) | reconverse | seed-balancing runtime project |
 | `~/software/charm/netlrts-darwin-arm8-smp` | classic | OLD, non-production build — never use for benchmarking |
 | `~/software/charm-sumdbytes/charm` (build `netlrts-darwin-arm8`) | classic, upstream main | fresh clone for the .sumd message-bytes work (charm#3937); built with `-DTRACING=1` |
+
+
+**`~/software/clusterFinding/charm` is a MIXED build (found 2026-09-22).**
+Its symlinks disagree:
+
+- `bin` -> `netlrts-darwin-arm8-smp/bin` — production
+  (`CMK_ERROR_CHECKING=0`, `CMK_OPTIMIZE=1`)
+- `include` -> `netlrts-darwin-arm8-smp-nonprod/include` — NOT production
+  (`CMK_ERROR_CHECKING=1`, `CMK_OPTIMIZE=0`)
+
+Anything built with `CHARM_HOME=~/software/clusterFinding/charm` prints
+"Charm++ built with internal error checking enabled ... Do not use for
+performance benchmarking". For timing, point `CHARM_HOME` at
+`~/software/clusterFinding/charm/netlrts-darwin-arm8-smp` directly — that
+build produces no banner. Measured difference on a 2-PE ping-pong-style
+producer/consumer sweep: per-message overhead 0.81 us on the production
+build, and the checked build's curve is not monotonic at all. Any timing
+taken through the `charm/` path before 2026-09-22 should be re-measured.
 
 **`~/software/recharm` caught up to upstream 2026-08-24; the 2026-08-11
 drift warning is RESOLVED.** charm is at origin/reconverse-specific-build
