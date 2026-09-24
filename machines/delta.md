@@ -185,3 +185,23 @@ environment and waits for peers that never start. Split the suite — run the
 bare-binary single-process tests on the login node and only the
 `srun`-launched multi-process ones inside an allocation. Observed 2026-09-16
 (job 22125300 hung this way).
+
+## Classic Charm++ (ofi, Slingshot) build and launch (2026-09-23)
+
+Target that works: `./build charm++ ofi-crayshasta smp cxi -j16 --with-production`
+(main @ 163833d2d; startup prints "OFI CXI extensions enabled"). The `cxi`
+option's script runs `module load cray-libpals cray-pmi libfabric`; Delta has
+no `cray-libpals` module, so Lmod loads NOTHING from that line and the build
+dies at `pmi_cray.h: No such file` / CrayNid.c `#error "Load the cray-pmi
+module"`. Fix: before `./build`, `module load cray-pmi` and add
+`/opt/cray/pals/1.8/lib/pkgconfig` to `PKG_CONFIG_PATH` and
+`/opt/cray/pals/1.8/lib` to `LD_LIBRARY_PATH`. The Lmod "unknown module
+cray-libpals" errors still print and are harmless.
+
+Launch with `srun --mpi=cray_shasta` (not pmix) and `+ppn <workers>`; one
+core per process goes to the comm thread, so `-c 8` fits `+ppn 7`. After a
+segfault in one rank, srun did not tear down the step: wrap classic runs in
+`timeout`. Reconverse CPU build (no cuda) is plain
+`./build charm++ reconverse-linux-x86_64 -j16 --with-production`, run with
+`srun --mpi=pmix`. Worked example: /projects/mzu/lkale/nokeep-audit
+(env.sh, env-classic.sh, run.sbatch).
