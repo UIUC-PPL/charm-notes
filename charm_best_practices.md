@@ -2743,3 +2743,28 @@ Verified unbiased: counting descents over the first draw of
 This matters most for migration/LB tests, where per-element data is supposed
 to be uncorrelated and any hidden linear structure makes the imbalance
 synthetic in a way that is easy to mistake for a real result.
+
+## Per-PE memory pools must outlive every network completion; a loopback reproduction rate is not a verification (2026-09-24, reconverse)
+
+Reconverse's LCI2 backend destroyed each PE's mempool in `exitThread()`,
+right after the exit barrier, while `ConverseExit` kept calling `progress()`
+(rank 0 waiting for the others, every rank inside `free_device`'s drain).
+Completions run from whichever thread polls: a late send completion freed its
+buffer into a destroyed pool, and a late receive was landed in one, because
+LCI's allocator is `CmiAlloc`, i.e. the *polling* thread's pool. Symptom:
+SIGSEGV after "End of program" in `CmiFree <- lci::progress_send` or
+`CommRemoteHandler <- lci::progress_recv` under `ConverseExit`, only after
+traffic-heavy runs, about 1 in 3 on Delta. Latent for three months (#160)
+because every test ends with a reduction and a quiet network. Fix
+(reconverse #256): destroy all pools as the last step of `exit()`, after the
+devices are gone. Reproducer: `tests/exit_inflight` posts many large sends
+and leaves the scheduler at once.
+
+Two lessons. First, the exit barrier says every rank *arrived*; it says
+nothing about completions still queued on either side, so nothing that a
+completion can touch (pools, queues, handler tables) may be torn down before
+the devices are drained. Second, the first fix drained only each PE's own
+sends and passed 20/20 on the laptop, where TCP loopback had shown 1 crash in
+6; on Delta it failed 10/10 because the receive side was the larger part.
+Loopback under-reproduces exit races. Verify a fix where the bug was found,
+with a before/after on the same job script, before opening the PR.
