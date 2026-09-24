@@ -43,6 +43,16 @@ reuses. In the laptop's `~/.ssh/config`:
         ControlPath ~/.ssh/cm-%r@%h:%p
         ControlPersist 12h
 
+**Password rejected although correct (2026-09-24):** pasting the NCSA
+password from 1Password into the ssh prompt added extra characters, and every
+attempt failed as "Permission denied" with nothing pointing at the paste.
+Type it, or check what the password manager inserts. `kinit lkale@NCSA.EDU`
+tests the Kerberos password on its own and names the failure (incorrect /
+expired / revoked), which ssh does not. The identity portal accepting an
+ACCESS (CILogon) login proves nothing about the NCSA Kerberos password; they
+are separate. Note each ssh attempt allows 3 password tries, so a few failed
+attempts can trip an account lockout.
+
 The human runs `ssh delta` once and answers Duo; after that `ssh delta '<cmd>'`
 and `scp delta:...` multiplex over the master with no prompt. Check with
 `ssh -O check delta` ("Master running (pid=...)"); if it reports no master,
