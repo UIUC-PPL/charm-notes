@@ -61,7 +61,7 @@ project status out of this file; it belongs in per-project memory.
 | Path | Runtime | Purpose |
 |---|---|---|
 | `~/software/clusterFinding/charm` (build `netlrts-darwin-arm8-smp`) | classic Converse, mainline main | paratreet2 laptop builds (`CHARM_HOME` points at the build dir). **MIXED — see warning below; benchmark against the build dir, not this path.** |
-| `~/software/recharm/charm` (build `reconverse-darwin-arm8`) | reconverse, branch `reviewed-with-reconverse` (switched 2026-09-13 from the stale `reconverse-specific-build`; reconverse is the `contrib/reconverse` submodule, pinned `58921e9`). The `reconverse-darwin-arm8` build dir on disk predates the switch and needs a rebuild before use. Coverage work lives in the separate worktree `~/software/recharm/coverage/charm-wt` | local reconverse testing on the reviewed line |
+| `~/software/recharm/charm` (build `reconverse-darwin-arm8`) | reconverse, branch `reviewed-with-reconverse` (switched 2026-09-13 from the stale `reconverse-specific-build`; reconverse is the `contrib/reconverse` submodule; charm tip `ea8f4b717`, submodule `b30ad31` as of 2026-09-26). The `reconverse-darwin-arm8` build dir was rebuilt from scratch 2026-09-26 with `./build charm++ reconverse-darwin-arm8 --with-production -j8` (previous build kept as `reconverse-darwin-arm8.bak-20260926`); pingpong and FoF3 smoke pass, no DYLD_LIBRARY_PATH needed. App objects compiled against the older build must be `make clean`-ed first: `CmiPrintf` is now `extern "C"` and stale objects fail to link. Coverage work lives in the separate worktree `~/software/recharm/coverage/charm-wt` | local reconverse testing on the reviewed line |
 | `~/software/seedbalancing/charm` (build `reconverse-darwin-arm8`) | reconverse | seed-balancing runtime project |
 | `~/software/charm/netlrts-darwin-arm8-smp` | classic | OLD, non-production build — never use for benchmarking |
 | `~/software/charm-sumdbytes/charm` (build `netlrts-darwin-arm8`) | classic, upstream main | fresh clone for the .sumd message-bytes work (charm#3937); built with `-DTRACING=1` |
@@ -144,7 +144,7 @@ Reconverse-side stack on this laptop, already built and consistent:
 | path | what |
 |---|---|
 | `~/software/recharm/charm/reconverse-darwin-arm8` | the charm build (`CHARM_HOME`) |
-| `~/software/recharm/{htram,unionfind}` | siblings built against it |
+| `~/software/recharm/{htram,unionfind}` | siblings built against it (on `master`, synced to origin 2026-09-26; htram's charmc path goes in an untracked `config.mk` since Ritvik's 2026-09 Makefile.common rewrite) |
 | `~/software/recharm/paratreet2` | the clone that links those siblings |
 
 The sibling libraries are what pin this: paratreet2's Makefile links
