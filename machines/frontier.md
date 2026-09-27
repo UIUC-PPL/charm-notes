@@ -701,3 +701,42 @@ Do not run two instances against one tree at once: each directory's
 - `make` exits 2 when a test command fails, so a launcher abort shows as
   `exit=2` on the RESULT line; the appended reason (CmiAbort's "Reason:" or
   the C++ `what():` text) is what distinguishes it from a real test failure.
+
+## ChaNGa/reconverse multi-node runs (2026-09-27)
+
+Source: `~/software/changaCache/baselines/frontier/frontierReport1/REPORT.md`
+(sections 4-6, addendum) and its `env.sh` on Kale's Mac.
+
+- `PMI_MAX_KVS_ENTRIES=1000` (the value recorded above) is too small at 32
+  processes: every rank aborts with `_pmi2_add_kvs: The KVS data segment of
+  1000 entries is not large enough for local entries` (job 5554802; 16
+  processes worked). `PMI_MAX_KVS_ENTRIES=65536` worked up to 64 processes.
+- Batch scripts do not inherit the `module` shell function from a tcsh login,
+  although `LMOD_CMD` is inherited, so a `[ -z "$LMOD_CMD" ]` guard is wrong.
+  Use `type module >/dev/null 2>&1 || source /opt/cray/pe/lmod/lmod/init/bash`.
+- The Core/26.05 stack now provides cmake 3.31.11, hwloc 2.13.0, python 3.14.3
+  (PrgEnv-gnu/8.6.0; gcc 13.3.1), replacing the 3.30.5 / 2.11.1 / 3.13 above.
+- Batch policy observed: bin 5 (1-91 nodes) has a 2 h max walltime; four
+  eligible-to-run jobs per user (later jobs are held). 80M-particle ChaNGa
+  jobs up to 32 nodes finished in under 30 minutes each.
+- LCI prints `Deadlock alert! The device does not have any posted recvs.
+  (current packet pool size 0)` from every process at ~80k lines/s when its
+  receive packet pool is exhausted by delivered-but-unconsumed messages. The
+  pool is `LCI_ATTR_NPACKETS` (default 65536 x 8192 B = 512 MB per process;
+  packet size `LCI_ATTR_PACKET_SIZE`); `+lci_ndevices` does not change it.
+  Seen on the 2B-particle box at 32 nodes right after the initial domain
+  decomposition; same signature on Delta at 8 nodes. Cap the log (1 GB) in
+  the job script so the job is killed rather than filling the filesystem.
+  Untried candidate: `LCI_ATTR_NPACKETS=262144` (2 GB pinned per process).
+- The Delta cxi settings `FI_MR_CACHE_MONITOR=userfaultfd
+  FI_CXI_RX_MATCH_MODE=hybrid` were set on every Frontier job and caused no
+  problem; whether Frontier needs them was not tested.
+- 56-PE core map for ChaNGa (core 0 of each 8-core L3 group is reserved):
+  `+pemap 1-7,9-15,17-23,25-31,33-39,41-47,49-55,57-63` with
+  `srun --cpu-bind=none -c $((56 / procs_per_node))`.
+- Tracing builds: `charmc -tracemode summary` cannot link configure's test
+  program (libck.a is scanned before libtrace-summary.a, leaving PUP symbols
+  undefined), so configure without it and run `make LDFLAGS="-tracemode
+  summary"`. For Projections use ChaNGa's `./configure --enable-projections`.
+  Cost on step time: summary 3-7%; Projections logs at `+logsize 20000000`
+  about 2x (6 of 448 PEs flushed their buffers).
