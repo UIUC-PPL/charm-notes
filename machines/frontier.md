@@ -727,7 +727,23 @@ Source: `~/software/changaCache/baselines/frontier/frontierReport1/REPORT.md`
   Seen on the 2B-particle box at 32 nodes right after the initial domain
   decomposition; same signature on Delta at 8 nodes. Cap the log (1 GB) in
   the job script so the job is killed rather than filling the filesystem.
-  Untried candidate: `LCI_ATTR_NPACKETS=262144` (2 GB pinned per process).
+  Follow-up the same day: `LCI_ATTR_NPACKETS=262144` (4x) did NOT stop the
+  flood; `LCI_ATTR_NPACKETS=1048576` (16x, 8 GB pinned per process) did, at
+  8 nodes with 32 TreePieces/PE (zero alerts) and at 32 nodes on the 2B box
+  (alerts only in the first minute, during particle loading). ChaNGa with 32
+  pieces/PE at 8 nodes triggers the flood deterministically (2 of 2 jobs);
+  8 and 128 pieces/PE do not. The pool demand follows the number of
+  in-flight exchange messages. Filed as charmplusplus/reconverse#257.
+- `+old-scheduler` does not affect the pool flood (same failure at 32 nodes
+  with the default pool), but at 8x56 it was 13-21% faster than the default
+  scheduler on every ChaNGa step, for both binaries tested (single rep;
+  rep-to-rep spread under 3%). Filed as charmplusplus/reconverse#258.
+- ChaNGa rejects command-line options placed AFTER the parameter file
+  ("Unrecognized command line argument: <param file>", exit 0, no step
+  runs). Put all `+` and `-` options before the parameter file.
+- Bin-5 walltime planning: a 2B-particle big step at 32x56 takes about
+  800-890 s at 8 pieces/PE, so a 3-step before/after pair needs one job per
+  binary with about 1 h per run.
 - The Delta cxi settings `FI_MR_CACHE_MONITOR=userfaultfd
   FI_CXI_RX_MATCH_MODE=hybrid` were set on every Frontier job and caused no
   problem; whether Frontier needs them was not tested.

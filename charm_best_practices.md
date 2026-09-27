@@ -150,6 +150,13 @@ runtime-level work.
   no startup collective is needed at all — and quality *checks* (reject &
   retry) stay lockstep too; only quality *selection* (pick best of P
   candidates) requires a reduction.
+- **Reconverse scheduler and LCI pool at scale (2026-09-27, Frontier,
+  ChaNGa).** The registered-queue scheduler measured 13-21% slower than
+  `+old-scheduler` on ChaNGa gravity steps at 8x56 (reconverse#258). LCI's
+  receive packet pool (`LCI_ATTR_NPACKETS`, default 65536 x 8 KB) must be
+  sized to the in-flight message count of all-to-all phases; exhaustion
+  shows as a "Deadlock alert ... packet pool size 0" flood and a hang
+  (reconverse#257). 16x the default removed it; 4x did not.
 
 ## Build-system notes (charm + reconverse)
 
@@ -2777,3 +2784,14 @@ sends and passed 20/20 on the laptop, where TCP loopback had shown 1 crash in
 6; on Delta it failed 10/10 because the receive side was the larger part.
 Loopback under-reproduces exit races. Verify a fix where the bug was found,
 with a before/after on the same job script, before opening the PR.
+
+## ChaNGa granularity: raise TreePieces per PE for clustered inputs (2026-09-27, Frontier)
+
+- With the default 8 TreePieces per PE, an 80M-particle clustered box at
+  8 nodes x 56 PEs runs at 60 s per step (LB idle fraction 0.83, heaviest
+  piece 15 s). 32 pieces/PE gives 25 s (idle 0.62, heaviest 3.4 s); 128/PE
+  gives 21 s, but domain decomposition grows to 9.5 s per step (1.1 s at
+  8/PE), so the step is no longer gravity-bound. The initial (pre-loop)
+  gravity scales well while in-loop steps do not until the piece count is
+  raised, because the first domain decomposition places the dense
+  cluster's work in a few pieces that the load balancer cannot split.
