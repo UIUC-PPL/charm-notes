@@ -215,3 +215,51 @@ segfault in one rank, srun did not tear down the step: wrap classic runs in
 `./build charm++ reconverse-linux-x86_64 -j16 --with-production`, run with
 `srun --mpi=pmix`. Worked example: /projects/mzu/lkale/nokeep-audit
 (env.sh, env-classic.sh, run.sbatch).
+
+## Multi-process runs (reconverse/LCI over cxi) (2026-09-27)
+
+From the ChaNGa node-cache campaign (lambb.00500, 1-8 nodes, account
+mzu-delta-cpu; job script `audit.sbatch` in
+/projects/mzu/lkale/software/changa-cache/audit).
+
+- **cxi environment for more than one process per node.** With the
+  default libfabric MR-cache monitor, every run with more than one
+  process per node aborted at the first load-balancing migration with
+  `cxil_map: write error` and LCI `backend_ofi.cpp register_memory_impl:394`
+  `fi_mr_regattr` "Invalid argument" / "Bad address". Working setting,
+  in addition to the existing `FI_PROVIDER=cxi` and
+  `LCI_NETWORK_BACKENDS=ofi`:
+  ```sh
+  export FI_MR_CACHE_MONITOR=userfaultfd FI_CXI_RX_MATCH_MODE=hybrid
+  ```
+  `FI_MR_CACHE_MONITOR=disabled` or `FI_MR_CACHE_MAX_COUNT=0` removes the
+  registration error but then aborts with "LE resources not recovered
+  during flow control. FI_CXI_RX_MATCH_MODE=[hybrid|software] is
+  required", and is slow. `memhooks` fails like the default; `kdreg2` +
+  hybrid timed out. (Triage jobs 22456361, 22456454.)
+- **Put `ulimit -c 0` in job scripts.** Aborted ranks wrote 7-24 GB core
+  files each into the working directory and filled the mzu 500 GB project
+  quota once.
+- **8-node hang with log flood.** At 8 nodes (8x64), two runs hung after
+  the last "Big step" line until the timeout, with LCI printing
+  `refill_recvs:172 ... Deadlock alert! The device does not have any
+  posted recvs. (current packet pool size 19)` at about 70k lines/s
+  (19.7 GB and 11.2 GB logs). Cap log growth: a watchdog on the login
+  node cancelled any step whose log passed 1 GB. Treat 8-node timings as
+  suspect until this is understood.
+- **Partitions.** `cpu-preempt` preempted two jobs mid-campaign (one
+  after 15 runs, one by another of our own jobs); `cpu-interactive` ran
+  the short reruns; the main jobs used `cpu`.
+- **Core map for the 128-core nodes** (NUMA domains are 16 contiguous
+  cores; core 0 of each domain left free):
+  - 64 PEs/node: `+pemap 1-8,17-24,33-40,49-56,65-72,81-88,97-104,113-120`
+  - 120 PEs/node: `+pemap 1-15,17-31,33-47,49-63,65-79,81-95,97-111,113-127`
+
+  Launch: `srun --mpi=pmix --cpu-bind=none -N<nodes> -n<np> -c<128/procs-per-node>
+  ./ChaNGa +pe <total> +pemap <map> +showcpuaffinity` (the script also
+  exports `SLURM_CPU_BIND=none SRUN_CPU_BIND=none`). Reconverse maps PE
+  to core[globalPE mod list length], so the processes on a node take
+  disjoint domains.
+- **Moving large inputs.** Anvil to Delta, a 2.9 GB file (2902376480 B)
+  streamed as `ssh anvil cat <f> | ssh delta 'cat > <f>'` through the
+  laptop's shared ssh connections took 144 s; check md5 on both ends.

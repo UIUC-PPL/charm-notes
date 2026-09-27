@@ -254,6 +254,15 @@ runtime-level work.
   prefetch ships (canopy/top-level node data) must be finalized BEFORE
   the prefetch, not merely before the traversal. On-demand-fetched data
   (leaves) only needs to be ready by traversal time.
+- **`initproc` runs on every PE of an SMP process, concurrently
+  (2026-09-26, ChaNGa `registerStatistics()`).** Process-wide
+  registrations inside an initproc race: `CkReduction::addReducer`
+  appends to an unlocked table, and its `CkAssert(CmiMyRank()==0)` is
+  compiled out in production builds. Each process can then assign a
+  different index to the same reducer; the symptom is the first
+  reduction using that reducer jumping through a wrong or empty table
+  slot on another process. Register only when `CmiMyRank()==0`, or use
+  `initnode`.
 
 ## Message-driven design heuristics (from the seed-LB papers, validated)
 
