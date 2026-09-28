@@ -756,3 +756,43 @@ Source: `~/software/changaCache/baselines/frontier/frontierReport1/REPORT.md`
   summary"`. For Projections use ChaNGa's `./configure --enable-projections`.
   Cost on step time: summary 3-7%; Projections logs at `+logsize 20000000`
   about 2x (6 of 448 PEs flushed their buffers).
+
+## Corrections from the 2026-08-12 bootstrap (folded 2026-09-27)
+
+Source: the on-machine session's `frontier-corrections.md` (paratreet2/FoF
+stack, `reconverse-specific-build`, FetchContent era). Items already covered
+above (single_node_vni, HWLOC trap, lmod in scripts, sacct walltime
+calibration, login-node etiquette) and items overtaken since are omitted.
+
+- Build dir wedged after a failed configure: rerunning `./build` prints only
+  `"reconverse-linux-x86_64" already exists but is in an inconsistent state`.
+  Add `--force` to the same command (buildcmake behaviour, any branch).
+- Legacy `~/software/charm` tree only (FetchContent; the submodule era has no
+  such flag): `--with-fetch-reconverse-dir` must be absolute (a relative value
+  resolves against the build dir) and is cached in CMakeCache.txt, so a bad
+  value survives a corrected command line; use `$HOME/software/charm/reconverse`.
+  `charm/lib` (the LD_LIBRARY_PATH entry) is a symlink created by the build.
+- Harmless configure message: `Could NOT find Python2 ... Wrong major version`
+  is charm's optional Python2 probe, not LCI's Python3 check.
+- unionfind: build on `master` (paratreet2 README; the FoF line merged there
+  in 972f2d2; `fof_with_aggregation` is stale). Build `prefixLib` first:
+  `cd unionfind/prefixLib && make CHARM_DIR=$CHARM_HOME PARENT_DIR=$HOME/software
+  PROFILE= AGGREGATION=` (-> libprefix.a), then the top-level make above.
+- paratreet2 from a fresh clone: `git submodule update --init; cd
+  utility/structures && ./configure && make` (-> libTipsy.a) before `src/`.
+- Layout in practice: the FoF stack lives in `~/software` (home quota was not
+  a problem); the ChaNGa campaign and site-run tier use `/ccs/proj/csc710/$USER`.
+- A libfabric pin is NOT needed: the 08-12 ENOSYS was the missing VNI flag, and
+  a binary built against libfabric 1.20.1 runs under the default 2.3.1.
+  Diagnostic: `FI_LOG_LEVEL=warn FI_LOG_PROV=cxi` turns LCI's opaque assert
+  into the provider's reason (`cxip_gen_auth_key failed: -38`).
+- Detached allocations: item 2 (plain `salloc -A csc710 -t <min> -N 1 <script>`,
+  many sequential srun steps) CONFIRMED; item 1 (`--no-shell` + `--jobid`) still
+  untested. `-N 1` allocations were granted in seconds.
+- Walltime: omitting `-t` gives `DefaultTime=01:00:00`; `scontrol` shows
+  partition MaxTime 7 days, but the user-guide bin limit (bin 5: 2 h) above is
+  the one to plan to. An oversized `-t` is not clamped; it costs backfill.
+- FoF3 `-u dist` prints `UnionFindLib: ... Number of components found: 0` on a
+  single-process run: that is the cross-process count, legitimately 0. The
+  authoritative lines are `FOF3STAT components:` / `FOF3 TEST PASSED`
+  (10k -> 3549, 100k -> 33933, serial and dist agree).
