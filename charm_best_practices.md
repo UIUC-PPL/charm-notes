@@ -2805,3 +2805,49 @@ with a before/after on the same job script, before opening the PR.
   gravity scales well while in-loop steps do not until the piece count is
   raised, because the first domain decomposition places the dense
   cluster's work in a few pieces that the load balancer cannot split.
+
+## A process-shared node cache pays back idle time, not messages (2026-09-28, Frontier, 8-64 nodes)
+
+Replacing a per-PE cache with one process-shared store cuts cross-node fetches a lot and can still save no
+time at all. Measured with two ChaNGa binaries differing only in that (per-PE `CkCacheManager` against a
+process-shared tree store), 80M particles, one process per node, 56 worker threads per process, 32 tree
+pieces per thread, both binaries instrumented, 2 reps:
+
+|            | 8 nodes            | 64 nodes           |
+|------------|--------------------|--------------------|
+| reply messages before / after | 1,493,483 / 870,679 (0.58) | 6,020,336 / 2,105,392 (0.35) |
+| messages saved per worker thread | 1,390 | 1,092 |
+| step time ratio after/before | 0.995 | 0.908 |
+| load-balancer idle fraction, before | 0.056 | 0.257 |
+| idle fraction, after | 0.058 | 0.197 |
+
+Per-thread message savings are the SAME order at both scales (slightly smaller at 64 nodes), yet one case
+gains nothing and the other gains 9%. So message count is not the mechanism. Of the 248 ms per thread saved at
+64 nodes, 210 ms (85%) is reduced idle: the cache removes WAITING, and only where there is waiting to remove.
+
+Check the arithmetic before believing a message-count argument. Measure the per-message receive cost (a
+flood microbenchmark under the same runtime flags gave 0.73 us with many receivers, 30 us worst case), then
+messages_saved / threads x cost. Here that is 1,390 x 0.73 us = 1.0 ms against a 15 s step: 0.007%, and 0.28%
+even at the worst-case cost. The same arithmetic applied to an earlier operating point that DID gain 12%
+explains only 16 ms of a 7.3 s gain, so that gain was not throughput either. It was 2.3 s of cache teardown
+("finish cache" fell from 2.38 s to 0.05 s, a third of the gain, because a per-PE cache holding many entries
+is expensive to tear down) plus stall removal at idle 0.83.
+
+Rule of thumb from these points: the gain is roughly a third of the load balancer's idle fraction. Below about
+0.1 idle, a shared cache is not worth enabling; above 0.2 it is worth 10-17%. The idle fraction is printed by
+the load balancer every step, so this is free to check before doing any cache work.
+
+Corollary for the sharing cost: the shared store's own instrumented miss path cost 31 ms per thread per step
+at 8 nodes, thirty times the message processing it removed, with its latch contended about 11,000 times per
+thread per step (56 threads sharing one store). Sharing is not free; it has to buy back real waiting.
+
+## charm's per-arch CXI option file is dead code (2026-09-28, charm ofi-crayshasta)
+
+`src/arch/ofi-crayshasta/conv-mach-cxi.h` opens with `#ifndef _CONV_MACH_H` / `#define _CONV_MACH_H`, the same
+guard the arch's base `conv-mach.h` has already defined by the time the option file is included, so its entire
+body is skipped. Selecting the `cxi` build option therefore changes nothing in that header. CXI support is on
+regardless because CMakeLists sets `CXI ON` for this arch and emits `#define CMK_CXI 1` into the generated
+options header; runs print "OFI CXI extensions enabled" whether or not the option was named on the build line.
+Harmless today, but the file cannot be used to change anything until the guard is renamed. Generalisable
+check: an option header whose guard collides with the base header it augments is silently inert, and the
+symptom is "the flag makes no difference" rather than a build error.

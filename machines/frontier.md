@@ -796,3 +796,71 @@ calibration, login-node etiquette) and items overtaken since are omitted.
   single-process run: that is the cross-process count, legitimately 0. The
   authoritative lines are `FOF3STAT components:` / `FOF3 TEST PASSED`
   (10k -> 3549, 100k -> 33933, serial and dist agree).
+
+## Classic charm (ofi-crayshasta) alongside reconverse (2026-09-28)
+
+The Build bootstrap above says "reconverse ONLY — no classic charm on Frontier". That is no longer true: a
+classic build works and is useful as a reference point. It coexists with a reconverse build in the same source
+tree (different build directory), so no second clone is needed.
+
+    module load PrgEnv-gnu cmake hwloc python
+    ./build ChaNGa ofi-crayshasta smp --with-production -j8     # exit 0, all modules build
+
+Naming `cxi` on the build line (as older recipes do) changes nothing here: CMakeLists sets `CXI ON` for this
+arch automatically, and the option's own header is inert (see charm_best_practices.md, "per-arch CXI option
+file is dead code"). Unlike the reconverse build, this one compiles the tcharm-based ck-libs too.
+
+Launching: plain `srun` joins the ranks (same rule as reconverse). Gate on the banner
+`Charm++> Running in SMP mode: <N> processes, <W> worker threads (PEs) + 1 comm threads per process`.
+Classic SMP spends one core per process on the comm thread, so at 56 usable cores per node use
+`+ppn <cores_per_process - 1>` and pin with LOGICAL indices inside each task's cpuset:
+
+    srun --network=single_node_vni --cpu-bind=cores -N<nodes> -n<procs> --ntasks-per-node=<ppn> -c<56/ppn> \
+        ChaNGa +ppn <c-1> +pemap L0-<c-2> +commap L<c-1> +showcpuaffinity ... <param file>
+
+### More than one process per node exhausts CXI memory registration
+
+With 2 or more processes per node (tested 4 and 8 per node, 8 and 32 nodes, 80M particles) every run dies
+before the first step:
+
+    Reason: [80] fi_mr_enable error: -28 handle ... addr ... len 0x4000000 No space left on device
+
+0x4000000 is 64 MB, charm's default OFI memory-pool block (`MEMPOOL_INIT_SIZE_MB_DEFAULT`), which the CXI path
+registers whole to aggregate FI_MR_ENDPOINT registrations. One process per node registers it fine; several
+processes sharing a node's NIC do not. It is NOT a per-process data-volume effect: the same 4-per-node shape
+fails identically at 32 nodes, where each process holds a quarter of what it held at 8 nodes. The failure lands
+just after the initial domain decomposition, i.e. on a pool EXPANSION during the first big particle exchange,
+not at startup.
+
+What does and does not help:
+
+| init/expand block | ceiling | 4 processes per node | speed |
+|---|---|---|---|
+| 64 MB (default) | 512 MB (default) | fails | n/a |
+| 32 MB | 128 MB | fails | n/a |
+| 8 MB | 64 MB | runs | ~5x slower |
+| 8 MB | 512 MB | runs | ~5x slower (initial gravity 282 s against 54 s) |
+
+(`+ofi_mempool_init_size_mb`, `+ofi_mempool_expand_size_mb`, `+ofi_mempool_max_size_mb`.) The ceiling is not
+the constraint; the block size is, and the block size that performs is the one that exhausts the node budget.
+Dropping `FI_MR_CACHE_MONITOR=userfaultfd` / `FI_CXI_RX_MATCH_MODE=hybrid` changes nothing. The shared-memory
+alternatives the OFI layer's own comment recommends for intra-node traffic (XPMEM, CMA) are not reachable:
+their option files exist for gni/netlrts/verbs and for the generic `ofi` arch, but not for `ofi-crayshasta`,
+and supplying them means adding files to the charm tree. So on the current stack, classic charm here is
+effectively limited to one process per node. Reports of multi-process ChaNGa runs on this machine date from
+about two years earlier, before this registration path; worth re-checking against whatever build those used.
+
+Reference point measured this way (80M particles, 8 nodes, one process per node, 55 workers + 1 comm, 14336
+tree pieces, same input and decomposition as the reconverse runs): classic 45.7 s per big step against
+reconverse 14.9 s with `+old-scheduler`, i.e. reconverse about 3x faster. The process-shared node cache is
+worth 20% on classic here and nothing on reconverse, for the reason in charm_best_practices.md.
+
+## Shrinking a queued job's walltime gets it backfilled (2026-09-28)
+
+A 2-node job requesting 2 h was projected to start 5 h later (484 higher-priority jobs pending). Reducing the
+limit IN PLACE, no cancel and the same job id, got it running within minutes:
+
+    scontrol update JobId=<id> TimeLimit=00:30:00
+
+Slurm lets a user lower a job's time limit but not raise it. Ask for what the work needs: an oversized `-t`
+costs backfill opportunities, and on this machine that cost hours rather than minutes.
