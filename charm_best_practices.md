@@ -107,6 +107,16 @@ runtime-level work.
   point the WRONG WAY vs a real network — measure the actual curve before
   committing framework changes.
 
+- **Classic vs reconverse: compare at equal cores, and with the current scheduler.**
+  Classic SMP runs one comm thread per process on its own core, so "8 processes
+  x 8 PEs" is 72 busy cores per node on classic and 64 on reconverse (no comm
+  thread). ChaNGa on Anvil (2026-09-28) looked 1.08-1.29x slower on reconverse
+  at "the same layout"; at equal cores (classic 8x7+comm vs reconverse 8x8, or
+  8x8+comm vs 8x9) with reconverse#259 it was 4-9% FASTER. Pin both runtimes to
+  the same core set, verify with +showcpuaffinity, and note the scheduler
+  version. Also: reconverse at 1 process per node needs `+lci_ndevices 8` on
+  message-heavy apps (ChaNGa 1x64: 0.60x speed without it).
+
 ## Debugging on macOS
 
 - **lldb strips DYLD_LIBRARY_PATH** (SIP): set it inside lldb with
