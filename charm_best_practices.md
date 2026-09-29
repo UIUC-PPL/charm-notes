@@ -2833,6 +2833,13 @@ explains only 16 ms of a 7.3 s gain, so that gain was not throughput either. It 
 ("finish cache" fell from 2.38 s to 0.05 s, a third of the gain, because a per-PE cache holding many entries
 is expensive to tear down) plus stall removal at idle 0.83.
 
+Two further points from a classic-charm build on the same input (2026-09-28, 8 nodes): with 55 worker threads
+in one process the shared cache is worth 2.4x (54.1 s against 22.5 s), and with 13 or 6 threads per process it
+is worth nothing (0.989). Same binaries, same decomposition; only the threads-per-process count differs. Fewer
+threads per process means less per-thread cache duplication and less stalling, so nothing is left for the
+shared store to recover. This is the strongest form of the rule: the benefit is set by how much the per-PE
+caches were costing, not by how many messages the shared one removes.
+
 Rule of thumb from these points: the gain is roughly a third of the load balancer's idle fraction. Below about
 0.1 idle, a shared cache is not worth enabling; above 0.2 it is worth 10-17%. The idle fraction is printed by
 the load balancer every step, so this is free to check before doing any cache work.

@@ -846,14 +846,42 @@ the constraint; the block size is, and the block size that performs is the one t
 Dropping `FI_MR_CACHE_MONITOR=userfaultfd` / `FI_CXI_RX_MATCH_MODE=hybrid` changes nothing. The shared-memory
 alternatives the OFI layer's own comment recommends for intra-node traffic (XPMEM, CMA) are not reachable:
 their option files exist for gni/netlrts/verbs and for the generic `ofi` arch, but not for `ofi-crayshasta`,
-and supplying them means adding files to the charm tree. So on the current stack, classic charm here is
-effectively limited to one process per node. Reports of multi-process ChaNGa runs on this machine date from
-about two years earlier, before this registration path; worth re-checking against whatever build those used.
+and supplying them means adding files to the charm tree. So on the current stack, the OFI BUILD is limited to
+one process per node. That is an ofi-crayshasta limitation, not a machine one: the MPI build below runs 4 and 8
+processes per node without trouble, because charm's MPI layer registers nothing with the NIC itself.
 
-Reference point measured this way (80M particles, 8 nodes, one process per node, 55 workers + 1 comm, 14336
-tree pieces, same input and decomposition as the reconverse runs): classic 45.7 s per big step against
-reconverse 14.9 s with `+old-scheduler`, i.e. reconverse about 3x faster. The process-shared node cache is
-worth 20% on classic here and nothing on reconverse, for the reason in charm_best_practices.md.
+Reference point (80M particles, 8 nodes, one process per node, 55 workers + 1 comm, 14336 tree pieces, same
+input and decomposition as the reconverse runs): OFI build 45.7 s per big step against reconverse 14.9 s with
+`+old-scheduler`. Do NOT read that as "reconverse is 3x faster": one process per node is the wrong shape for
+classic charm, which has a comm thread per process. At its own best shape the MPI build reaches 17.5 s, within
+17% of reconverse. See the MPI section below.
+
+## Classic charm on the MPI layer, and the right process shape (2026-09-28)
+
+    ./build ChaNGa mpi-linux-x86_64 smp --with-production -j8      # Cray MPICH 8.1.31, exit 0
+
+Runs several processes per node without the registration problem above. Cray MPICH moves same-node messages
+above 8 KB with CMA (`MPICH_SMP_SINGLE_COPY_MODE=CMA`, printed by `MPICH_ENV_DISPLAY=1`), never touching the
+NIC, which is what the OFI layer's own source comment says should be done and does not implement here.
+
+Shape sweep, 8 nodes, 80M particles, -p 14336, medians of 2 reps, `+setcpuaffinity`, all runs clean:
+
+| processes per node | one per | workers each | before | after | after/before |
+|---|---|---|---|---|---|
+| 1 | whole node | 55 | 54.08 s | 22.46 s | 0.415 |
+| 4 | NUMA domain | 13 | 17.54 s | 17.35 s | 0.989 |
+| 8 | L3 region | 6 | 17.71 s | 17.52 s | 0.989 |
+
+- **Use several processes per node for classic charm: 3.1x faster than one.** One per NUMA domain (4) and one
+  per L3 region (8) are equivalent; there is no reason to prefer the finer split.
+- The process-shared node cache is worth 2.4x at 55 threads per process and nothing at 13 or 6, which is the
+  idle relationship in charm_best_practices.md seen again.
+- **`MPICH_OFI_NIC_POLICY`**: Cray MPICH picks a NIC per NUMA domain by default, so ONE process per node
+  spanning all four domains aborts in `MPI_Init` with "Unable to use a NIC_POLICY of 'NUMA'. Rank N is not
+  confined to a single NUMA node". Set `MPICH_OFI_NIC_POLICY=ROUND-ROBIN` for that shape. At 4 per node the
+  policy makes no measurable difference (182.5 s NUMA against 190.3 s round-robin).
+- Slurm's `--cpu-bind=cores -c $((56/ppn))` already hands rank r exactly NUMA domain r
+  (1-15, 17-31, 33-47, 49-63 for 4 per node). No manual map is needed or wanted; see the affinity trap below.
 
 ## Shrinking a queued job's walltime gets it backfilled (2026-09-28)
 
@@ -864,3 +892,20 @@ limit IN PLACE, no cancel and the same job id, got it running within minutes:
 
 Slurm lets a user lower a job's time limit but not raise it. Ask for what the work needs: an oversized `-t`
 costs backfill opportunities, and on this machine that cost hours rather than minutes.
+
+
+## Two affinity traps that cost a 10x and a 40x misconfiguration (2026-09-28)
+
+- **`+pemap L<n>` logical indices are numbered over the WHOLE MACHINE, not over the calling process's cpuset.**
+  With one process per node that is harmless. With 4 processes per node, `+pemap L0-12 +commap L13` makes all
+  four ranks resolve to the SAME thirteen cores: 52 threads on 13 cores, 42 cores idle, and the step time goes
+  from 17.4 s to 185.5 s. For more than one process per node use `+setcpuaffinity` and let charm spread inside
+  the cpuset Slurm already set, or build a per-rank OS-index map. Charm warns ("Multiple PEs assigned to same
+  core") -- capture that warning in the job script's own RESULT line and gate on it, or a 10x misconfiguration
+  reads as a performance result.
+- **`sbatch --export` separates assignments with commas**, so an affinity map containing commas is truncated at
+  the first one: `AFF=+pemap 1-7,9-15,...` arrives as `+pemap 1-7`, putting 55 threads on 7 cores (run timed
+  out at 900 s). Set such maps inside the batch script, never through `--export`.
+- Note the OFI build's automatic affinity is not a drop-in either: `+setcpuaffinity` there assigns PE i to OS
+  core i starting at core 0, which Frontier reserves, and the run aborts with "CmiSetCPUAffinity failed to bind
+  PE #0 to PU P#0". For one process per node on that build use the explicit 56-core map recorded above.
