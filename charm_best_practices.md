@@ -128,6 +128,13 @@ runtime-level work.
   `-std=gnu++17` — and to CMK_NATIVE_CXX_FLAGS / CMK_SEQ_CXX_FLAGS too,
   because conv-mach-darwin.sh snapshots those from CMK_CXX_FLAGS *before*
   the arch-specific script appends (charmxi builds with NATIVE).
+- **The reverse trap: code that compiles on the Mac can fail on Linux.**
+  Linux charmc with gcc 11 compiles as `-std=gnu++11` (Anvil, 2026-09-28),
+  while the darwin arch adds `-std=gnu++17`. A test written and built only on
+  the Mac broke on Anvil: a struct with a default member initializer
+  (`long x = 0;`) is not an aggregate before C++14, so `Row{...}` brace
+  initialization fails. Hand-run tests outside CI DIRS are the exposed ones;
+  check new tests with `charmc -std=gnu++11` locally (charm #4012).
 - `!`-prefix shell in a Claude session has the user's login context but NO
   TTY: interactive sudo and passphrase-protected ssh keys fail there; use a
   real terminal for those.
