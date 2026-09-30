@@ -199,7 +199,14 @@ reconverse is `lcrun -n <procs> env DYLD_LIBRARY_PATH=<build>/lib ./app
   siblings: `unionfind`, `htram`, old `paratreet` (comparison oracle),
   inputs, design docs.
 - `~/software/recharm/` — reconverse-based charm (above) and any
-  reconverse-stack clones for local reconverse testing.
+  reconverse-stack clones for local reconverse testing. Also holds
+  `wt-objid-pr0` (PR #4016 worktree, baseline reconverse build) and the
+  restart-hang handover prompt (`PROMPT-restart-hang.md`, 2026-09-29).
+- `~/software/objid/` — the 64-bit object id redesign (charm #3994), since
+  2026-09-29: `wt-objid` is a git worktree of `~/software/recharm/charm`
+  (branches objid-redesign / objid-pr*), design docs in the repo under
+  `doc/objid64-*.md` on branch objid-redesign; rebuild the worktree's
+  `reconverse-darwin-arm8` before testing. Project memory is separate.
 - `~/software/seedbalancing/` — seed balancing in reconverse; design doc
   SEEDLB_DESIGN.md.
 - `~/software/charm-notes/` — clone of UIUC-PPL/charm-notes (the shared
