@@ -644,9 +644,13 @@ before trusting `ctest`.
 
 ## Run idioms
 
-- Reconverse builds are inherently SMP, so multi-process runs need an
-  explicit `+ppn` (e.g. `srun ... -n 2 ./app +ppn 1`). `+pe` is the TOTAL PE
-  count across processes; `+ppn` is per process.
+- Reconverse builds are inherently SMP. Give the PE count with ONE of
+  `+pe <total across processes>` or `+ppn <per process>`, never both:
+  `+pe` together with `+ppn` aborts with "only one of +pe, +ppn and +p may
+  be specified" (checked 2026-09-30: `srun -N 2 --ntasks-per-node=1 ./hello
+  +pe 8` gives 2 processes x 4 PEs, banner "8 PEs ... 4 PEs per process").
+- A hung reconverse run killed by `timeout`/srun loses its buffered stdout;
+  launch with `srun ... stdbuf -oL -eL ./app` when the last line matters.
 - **No comm thread.** `CommunicationServerThread()` is an empty stub
   (`convcore.cpp:1382`) and `CmiStartThreads` creates exactly `+ppn` threads.
   Unlike classic Converse SMP there is no core to reserve — all 128 cores can
