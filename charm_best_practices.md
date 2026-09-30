@@ -2640,6 +2640,31 @@ process on cleanup). Filed upstream as uiuc-hpc/lci#202 (2026-09-17); charm's
 CI now removes the directory before each `lcrun` step and bounds the step with
 a timeout (charm PR #3986).
 
+### Concurrent launches of different programs join one job; set SLURM_JOBID per launch (2026-09-30, Mac, objid test work)
+
+The second bullet above has a worse form than mis-ranking. Two `lcrun`
+launches running at the same time on one host, neither with `SLURM_JOBID`
+set, both use `~/.tmp/lct_pmi_file-0`, so processes of DIFFERENT programs
+can take ranks in the same job and exchange messages. Observed symptoms, none
+of which is a runtime bug:
+
+- a rank segfaults inside an entry method of the other program (a
+  group-creation message from program A dispatched into program B during
+  `_initDone`);
+- `pmi_wrapper_file.cpp:getname: Key LCI_BOOTSTRAP_0_0_0 not found in
+  ~/.tmp/lct_pmi_file-0/data`;
+- an LCI OFI `post_sends_impl: Invalid argument` assert;
+- a hang before the program's first line prints, so a watchdog inside the
+  program cannot catch it.
+
+Workaround: give each concurrent launch its own numeric job id, which selects
+a private directory: `SLURM_JOBID=<unique> lcrun -n 2 ./prog +pe 4`. This
+matters whenever several Claude agents or terminals run multi-process tests
+on one machine at once; CI already serializes launches and removes the
+directory (charm #3987, uiuc-hpc/lci#202). A launch that dies mid-bootstrap
+still leaves its own directory with a nonzero counter;
+`rm -rf ~/.tmp/lct_pmi_file-*` clears all of them.
+
 ## Charm++-on-reconverse interface lessons (2026-09-16/17)
 
 Four defects from one week, all at the seam between the two code bases, all
