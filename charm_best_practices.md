@@ -2865,3 +2865,21 @@ options header; runs print "OFI CXI extensions enabled" whether or not the optio
 Harmless today, but the file cannot be used to change anything until the guard is renamed. Generalisable
 check: an option header whose guard collides with the base header it augments is silently inert, and the
 symptom is "the flag makes no difference" rather than a build error.
+
+## Reconverse: broadcast fan-out to peers runs in rank 0's handler; do not barrier before scheduling (2026-09-30)
+
+On reconverse a spanning-tree broadcast reaches a process at its rank 0, and the copies for the
+process's other ranks are made inside rank 0's `Cmi_bcastHandler`. So peers see a broadcast only
+when rank 0 is running handlers. `CmiNodeBarrier` spins on `comm_backend::progress()`, which moves
+the network but runs no handlers. Consequence: an init-time protocol where rank 0 enters a node
+barrier before its scheduler runs, while its peers need a broadcast to proceed, deadlocks -- and
+only on processes other than the sender's (the sender delivers to its own peers directly), so
+single-process and 1-PE-per-process runs hide it. This was charm #4018 (checkpoint restart hung
+with >1 process and >1 PE per process; `CkRestartMain` called `_initDone` on rank 0 only and
+relied on the readonly broadcast to bring in the others). Fix: every PE calls `_initDone` itself
+(#4019). Runtime-side hazard filed as reconverse #261. Classic SMP never hit it because the comm
+thread delivers broadcasts to every worker queue. When a hang shows up right after a restart or
+startup phase, `sample <pid>` both processes: rank 0 in `_initDone -> CmiNodeBarrier -> progress`
+with other ranks idle in `CsdSchedulerRegistered` is this pattern. Test the 2-process x 2-PE
+shape (`lcrun -n 2 ./app +pe 4`) for any startup/restart protocol change; the regular CI tier is
+single-process and cannot see it.
