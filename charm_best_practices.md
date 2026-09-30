@@ -2882,4 +2882,7 @@ thread delivers broadcasts to every worker queue. When a hang shows up right aft
 startup phase, `sample <pid>` both processes: rank 0 in `_initDone -> CmiNodeBarrier -> progress`
 with other ranks idle in `CsdSchedulerRegistered` is this pattern. Test the 2-process x 2-PE
 shape (`lcrun -n 2 ./app +pe 4`) for any startup/restart protocol change; the regular CI tier is
-single-process and cannot see it.
+single-process and cannot see it. Lineage: reconverse #100 (2025-09, CmiAbort before
+scheduling with >1 PE), reconverse PR #200 (2026-08, readonly broadcast's self-message to PE 0 never
+processed at startup -> root at the sender), charm #4018 (2026-09, remote rank 0 relay). When a new
+init-path hang appears, check this list first.
