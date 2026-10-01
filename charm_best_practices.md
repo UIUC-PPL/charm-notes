@@ -2911,3 +2911,21 @@ single-process and cannot see it. Lineage: reconverse #100 (2025-09, CmiAbort be
 scheduling with >1 PE), reconverse PR #200 (2026-08, readonly broadcast's self-message to PE 0 never
 processed at startup -> root at the sender), charm #4018 (2026-09, remote rank 0 relay). When a new
 init-path hang appears, check this list first.
+
+## A notification after a one-sided put must take the same channel as the put (2026-09-30, reconverse +ipc)
+
+Local completion of an RDMA put means the source buffer can be reused. It does not mean the bytes
+are visible at the destination. Converse's zerocopy Direct API (`CkNcpyBuffer::put`, post API)
+sends the destination's "buffer filled" ack as an ordinary message from `CommRputLocalHandler`.
+That is correct only because the ack goes over the same network backend as the put. Any second
+channel to the same destination can deliver the ack before the data: reconverse's `+ipc`
+shared-memory pool (PR #246), or classic pxshm/xpmem. The ack then arrives first and the receiver
+reads a stale buffer. The fix in #246 makes sends inside the ack handler skip the pool, using a
+per-PE counter set by `CmiIpcBeginNetworkOnly`/`CmiIpcEndNetworkOnly`. `persist-comm.cpp` avoids the
+same hazard by sending inline to pool peers and never putting to them. A get needs no such
+handling, because local completion of a get means the data is already here. Review rule: whenever
+a new transport takes over some messages (shared memory, a size cutoff, a second device), list every
+place that follows a one-sided operation with a message to the same peer, and check that both
+still travel by the same route. A test can show the misrouting by counting pool sends inside the
+ack handler (`tests/rdma_ipc_ack`). Checking the payload bytes did not catch it on Delta: there the
+put's data always landed before the ack arrived.
