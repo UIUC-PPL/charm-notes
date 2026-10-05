@@ -2929,3 +2929,35 @@ place that follows a one-sided operation with a message to the same peer, and ch
 still travel by the same route. A test can show the misrouting by counting pool sends inside the
 ack handler (`tests/rdma_ipc_ack`). Checking the payload bytes did not catch it on Delta: there the
 put's data always landed before the ack arrived.
+
+## Three ways a test tier overstates itself (2026-10-04, charm-renewal assessment)
+
+Found while measuring coverage of Charm++'s own source on reconverse and
+mapping what the deletion of the classic runtime would remove.
+
+- **A `make test` target can "pass" without running anything.** The
+  reconverse CI convention is `$(call run, ./pgm +p1)` with `run` defined in
+  `tests/common.mk`; a Makefile that forgets `include ../../common.mk`
+  (examples/charm++/allGather) expands `$(call run, ...)` to nothing, so
+  `make test` links the binary, exits 0, and the coverage run records
+  "pass" with zero lines executed. Gate on the artifact: a CI check that
+  every `test` target started a process, or a per-test coverage floor.
+- **Static libraries hide uncovered code from the denominator.** With
+  `llvm-cov` against test binaries that link `libck.a`, an object no binary
+  pulls in (every trace module but trace-common, CkLoop, ck-cp, ckrdmadevice,
+  HybridBaseLB, ScotchLB: 80 of 212 compiled files) contributes zero lines
+  to the total, so the percentage looks better than the tree is. Report
+  "compiled sources absent from every binary" as its own list beside the
+  percentage.
+- **`unifdef` must use the macro values a translation unit sees, not the
+  ones in the arch header.** `src/arch/reconverse-*/conv-mach.h` sets
+  `CMK_SHARED_VARS_POSIX_THREADS_SMP 1`, but no reconverse Charm++ TU
+  includes that header, so in the compile the macro is undefined; running
+  unifdef with the arch value keeps init.C:1675-1695, which then fails to
+  compile. Derive the table from `cpp -dM` on a real TU (or from
+  `conv-autoconfig.h` plus the compiler's `-D`s), and verify each stripped
+  file by recompiling and comparing `nm` symbol tables with the original.
+- Smaller trap, same campaign: do not pass `TESTOPTS="+pe N"` to a test
+  Makefile under reconverse; `common.mk` appends TESTOPTS after the
+  program's own `+pN`, and `bin/testrun` already rewrites `+pN` to `+pe N`,
+  so the program gets two `+pe` arguments.
