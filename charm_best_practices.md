@@ -2961,3 +2961,89 @@ mapping what the deletion of the classic runtime would remove.
   Makefile under reconverse; `common.mk` appends TESTOPTS after the
   program's own `+pN`, and `bin/testrun` already rewrites `+pN` to `+pe N`,
   so the program gets two `+pe` arguments.
+
+## Refreshing a stale PR: one worktree per PR branch, rebase, re-gate, force-with-lease (2026-10-05)
+
+A PR that CI marks BEHIND (base moved; branch protection has "require
+branches to be up to date") is refreshed without touching any other
+checkout:
+
+- **One git worktree per PR branch**, each with its own build directory
+  (`git worktree add ../charm-rwr treecache-nodecache-rwr`). Several Claude
+  sessions share a laptop and the repository's stash stack, so never use
+  `git stash`; a worktree has nothing to stash. Fetch the base, then
+  `git rebase origin/<base>` in the worktree. A conflict in a comment-only
+  hunk still stops the rebase; resolve it and continue.
+- **Rebuild incrementally in the existing build dir**, do not reconfigure:
+  reconverse build dirs are CMake (`make -k -j8`; on reconverse four
+  ck-libs always fail: modulemblock, modulecollide, modulepose,
+  moduleseqpose, which is why `-k`), classic `netlrts-*` build dirs made
+  by `./build` are CMake too since 2026 (`make -j8` in the build dir;
+  `tmp/Makefile` has no per-target rules). Check that `lib/libck.a` and
+  the touched module archives have a new mtime before trusting the test.
+- **Re-run the application gates against the rebuilt libraries**, not just
+  CI. Application Makefiles (ChaNGa's included) do not list charm's
+  archives as dependencies, so `make` after a charm rebuild relinks
+  nothing: `rm -f <binary>` first.
+- **Push with a lease on the exact old tip**:
+  `git push --force-with-lease=<branch>:<old-sha> origin <branch>`. The
+  lease fails if anyone pushed in between; a bare `--force` would discard
+  that. Check branch protection before promising a merge:
+  `gh api repos/<org>/<repo>/branches/<base>/protection` gives
+  `required_approving_review_count` (charm `main` is 2, `reviewed-with-
+  reconverse` is 1 plus code owners) and `dismiss_stale_reviews` (false on
+  both, so existing approvals survive the force-push; if true, the rebase
+  costs a re-review).
+- **Merging**: charm allows squash and rebase merges only, and both
+  branches use `gh pr merge --squash` with the default message, which gives
+  "title (#NNNN)" subjects. Do not pass `--delete-branch` while a worktree
+  still has the branch checked out; delete the remote branch afterwards.
+- **Same change on two base branches** (main and reviewed-with-reconverse):
+  keep them as two PRs with two worktrees and rebase each onto its own
+  base; a cherry-pick between them is clean as long as the change lives in
+  files the two branches share unchanged (ck-libs/cache did).
+
+## ChaNGa as a Charm++ acceptance application: build and gate recipe, both runtimes (2026-10-05, Mac)
+
+ChaNGa is the application that exercises CkCache, liveViz, SDAG, SMP
+cache semantics and checkpoint/restart at once, so it is worth running as
+a gate for any ck-libs or runtime change. What it takes on the laptop
+(see `machines/mac.md` for paths):
+
+- **charm target**: `./build ChaNGa <arch> --with-production`. The plain
+  `charm++` target lacks CkCache and liveViz, and ChaNGa's configure fails
+  without them.
+- **Siblings**: ChaNGa's configure hard-codes `../utility` (N-BodyShop
+  structures; `cd utility/structures && ./configure && make`) and takes
+  `CHARMC=<build>/bin/charmc`. On macOS with MacPorts add
+  `LDFLAGS=-L/opt/local/lib`, or the link fails on liveViz's `-ljpeg`.
+- **Known make trap**: after `make clean` or a rebuild, `make` can exit 2
+  at `ln: ./charmrun: File exists` AFTER the binary linked; `rm -f charmrun`
+  and run make again. The symlink points at a charmrun.smp that does not
+  exist on reconverse; nothing uses it.
+- **Gates** (`teststep/test_pg.param`, 80 s total at 2 PEs): energy at
+  2 PEs and 4 PEs in one process, checkpoint then restart
+  (`-dt 0.001 -binout 6`, then `-n 15 +restart pgtest_ms.chk0`, must
+  print "Restarting at 10" and write `pgtest_ms.000015`), and a 2-process
+  run (the cache is per process, so only this one crosses the remote-fetch
+  path). Run idioms: reconverse `../ChaNGa +pe N` and
+  `lcrun -n 2 ../ChaNGa +pe 4`; classic `./charmrun ++local ../ChaNGa
+  +p2 ++ppn 2` and `+p4 ++ppn 2` for two processes.
+- **Where the number is**: ChaNGa prints no "should be / is" line with
+  this parameter file. The energy is column 4 of the last line of
+  `teststep/pgtest_ms.log`; the reference is -32.1915 (band +-0.005
+  around -32.19). Columns 1-12 of that log are deterministic for a given
+  PE count and compare exactly between builds; column 13 is wall time.
+  The last two angular-momentum columns differ in the 6th digit between
+  2 and 4 PEs, which is the reduction order, not a defect.
+- **Shared laptop**: other sessions may be running ChaNGa; after a
+  timeout kill only your own PIDs, never `pkill -f ChaNGa`, and treat
+  wall times as meaningless whenever `uptime` shows load above the core
+  count (it reached 127 during one gate run). Energies and line counts
+  are what the gate compares.
+- **Timing lives on clusters**: the Anvil recipes (classic mpi-smp 8x8
+  with `+pemap`/`+commap`, reconverse `+pe` with `+pemap`, `-p` = 32 x
+  total PEs on the 80M box, `srun --mpi=pmi2 --cpu-bind=none`) are in
+  `changaCache/baselines/anvil-talk/talk.sbatch`; a 4-node wholenode job
+  has waited 9 hours to 4 days on Anvil in 2026-10, so check
+  `sbatch --test-only` before promising a same-day number.
