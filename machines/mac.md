@@ -175,6 +175,12 @@ reconverse is `lcrun -n <procs> env DYLD_LIBRARY_PATH=<build>/lib ./app
   interference), or 7-8 procs x 1 worker are all valid TIMING
   configurations on this laptop (Kale, 2026-07-25). Classic netlrts
   remains limited to 2 procs x 2 PEs for timing.
+- Never start two `lcrun` jobs at the same time on this laptop (found
+  2026-10-08 running a ChaNGa test and its baseline side by side): both
+  jobs stall before the first step, one process of each spins at 100%
+  and its peer sits idle, and neither finishes. The same two commands
+  run one after the other each finish in a few minutes. Single-process
+  runs may overlap with one `lcrun` job.
 - After any killed or timed-out multi-process run, orphaned node
   processes accumulate: `pkill -9 -f <app>; pkill -9 -f charmrun`, then
   check `uptime` before trusting any timing (load averaged 192 once from
