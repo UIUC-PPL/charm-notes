@@ -3047,3 +3047,43 @@ a gate for any ck-libs or runtime change. What it takes on the laptop
   `changaCache/baselines/anvil-talk/talk.sbatch`; a 4-node wholenode job
   has waited 9 hours to 4 days on Anvil in 2026-10, so check
   `sbatch --test-only` before promising a same-day number.
+
+## Zero-copy post API: the data entry method can run inside your post entry method (2026-10-08, reconverse, macOS copy-based RDMA)
+
+Seen while moving ChaNGa's node-aggregated particle exchange to
+`nocopypost` parameters on a nodegroup entry (changa branch
+alltoall-aggregation, `DataManager::acceptNodeShuffleZC`).
+
+- The post entry method called `CkMatchBuffer` and then `CkPostBuffer`
+  and only afterwards recorded the landing buffer in its own table.
+  Intermittently (one decomposition in forty) the regular (data) entry
+  method ran, looked the buffer up, and found nothing. Counts of posts
+  and data deliveries were equal, so it was not a duplicate delivery:
+  the data entry method had executed BEFORE the post entry method
+  returned.
+- Mechanism, from ckrdma.C: when `CkMatchBuffer` has already registered
+  the tag, `CkPostBufferInternal` finds the match and calls
+  `CkPerformRget` right there, inside the post entry method
+  (`CkMatchBuffer` also sets `postAsync`, so the generated `_call_`
+  skips its own `CkRdmaIssueRgets`). On a copy-based layer the transfer
+  is a request/response pair, and reconverse drives `progress()` inside
+  sends, so the response, the ack handler
+  (`CkRdmaEMAckHandler` -> `enqueueNcpyMessage` -> `CmiHandleMessage`
+  when destPe == CkMyPe()) and the data entry method can all run
+  synchronously inside that `CkPostBuffer` call. On a true RDMA fabric
+  the completion is asynchronous and the order the manual implies
+  holds, so a Frontier run would not have shown this.
+- Rule: everything the data entry method needs must be recorded BEFORE
+  `CkMatchBuffer`/`CkPostBuffer`, and the data entry method must be
+  safe to run re-entrantly from inside the post entry method (do not
+  hold a lock across the match/post calls that the data path takes).
+- Related hazard, not yet observed: `NcpyEmInfo::counter` in
+  `CkRdmaEMAckHandler` is a plain int incremented once per nocopypost
+  buffer; with several buffers in one entry method and completions
+  running on different worker threads (reconverse has no comm thread)
+  two threads can both see the final count and enqueue the message
+  twice. One buffer per entry method (pack the arrays) avoids it and is
+  one RDMA operation instead of several.
+- Diagnostics that settled it: `fprintf(stderr, ...)` per post, data,
+  send and send-complete with PE and buffer pointers, then counting the
+  four kinds per node. `CkPrintf` lines were lost at the abort.
