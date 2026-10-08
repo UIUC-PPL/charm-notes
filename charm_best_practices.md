@@ -3077,6 +3077,20 @@ alltoall-aggregation, `DataManager::acceptNodeShuffleZC`).
   `CkMatchBuffer`/`CkPostBuffer`, and the data entry method must be
   safe to run re-entrantly from inside the post entry method (do not
   hold a lock across the match/post calls that the data path takes).
+- Reproducer (same day, `~/software/changaAlltoall/repro/postnest`,
+  attached to the charm issue filed from it): a nodegroup post entry
+  method with an `inPost` flag. Node-to-self zero-copy sends nest on
+  2000 of 2000 iterations (reconverse `CmiIssueRget` same-node branch:
+  memcpy and a direct handler call), with either call order. Cross-node
+  sends nest intermittently (0-3 per 2000 at 1 PE per process, 0 at 2
+  PEs per process): LCI2's `issueRget` calls `progress()` right after
+  posting the get. Reordering match and post does not avoid it.
+- The `NcpyEmInfo::counter` concern below was tested with three
+  nocopypost buffers per entry method, 18,000 deliveries per node at 1,
+  2 and 3 PEs per process: no duplicate, loss or corruption. LCI2's
+  per-device progress trylock serializes most completions; the only
+  window left (from reading) is a get that is already done when
+  `post_get_x` returns, whose handler runs outside that lock.
 - Related hazard, not yet observed: `NcpyEmInfo::counter` in
   `CkRdmaEMAckHandler` is a plain int incremented once per nocopypost
   buffer; with several buffers in one entry method and completions
