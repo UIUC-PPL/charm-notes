@@ -3078,7 +3078,7 @@ alltoall-aggregation, `DataManager::acceptNodeShuffleZC`).
   safe to run re-entrantly from inside the post entry method (do not
   hold a lock across the match/post calls that the data path takes).
 - Reproducer (same day, `~/software/changaAlltoall/repro/postnest`,
-  attached to the charm issue filed from it): a nodegroup post entry
+  attached to charmplusplus/charm#4023): a nodegroup post entry
   method with an `inPost` flag. Node-to-self zero-copy sends nest on
   2000 of 2000 iterations (reconverse `CmiIssueRget` same-node branch:
   memcpy and a direct handler call), with either call order. Cross-node
