@@ -934,3 +934,7 @@ Measured in-job (perf 6.4.0, kernel 6.4.0-150700.53.78-default, glibc 2.38):
 - perf data of a 56-thread process at `-F 99 --call-graph dwarf,8192` is 120-420 MB per 10 s run; write it to Lustre.
 - jemalloc is not installed anywhere (no module, no system package, no Spack entry); build 5.4.0 from the release
   tarball (`./configure --prefix=... && make -j8 && make install`, under a minute).
+- glibc `mallopt` (mmap threshold 32 MB, trim 1 GB, top pad 256 MB) at startup, which cut FoF3's page faults 37x and
+  sped it up 1.48x on Anvil (kernel 4.18, glibc 2.28), changes page-fault counts by 0-3% here and timed results by -4%
+  to +9% (2026-10-12, 2 nodes, Task Bench, SSSP, FoF3 80M). Do not carry the Anvil malloc result to this machine
+  without measuring it.
