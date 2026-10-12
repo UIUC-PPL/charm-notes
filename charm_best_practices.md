@@ -3101,3 +3101,44 @@ alltoall-aggregation, `DataManager::acceptNodeShuffleZC`).
 - Diagnostics that settled it: `fprintf(stderr, ...)` per post, data,
   send and send-complete with PE and buffer pointers, then counting the
   four kinds per node. `CkPrintf` lines were lost at the abort.
+
+## A shared-library runtime's `thread_local` can cost 13-27% of every cycle: the glibc 2.38 TLS slow path (2026-10-12, Frontier)
+
+Observed on Frontier (SLES 15, glibc 2.38) with reconverse built as `libreconverse.so`: `perf record` on Task Bench,
+SSSP and FoF3 put 13-27% of rank 0's cycles in the dynamic linker, `_dl_update_slotinfo` on top, then
+`update_get_addr`, `__tls_get_addr`, `__tls_get_addr_slow`. The samples sit at the entry of `_dl_update_slotinfo`,
+so every TLS access was taking the slow path, not just the first one per thread. The callers were libreconverse.so's
+`thread_local` variables (`objdump -d libreconverse.so | grep -c 'call.*__tls_get_addr'` = 262 sites; CcdRaiseCondition,
+CthResume, moodycamel's implicit-producer lookup, the Cld counters), reached on every scheduler iteration. The
+executable's own Cpv variables cost nothing: they are in the main program and use the local-exec model.
+
+This is the signature of glibc bug 19924 ("slow TLS access after dlopen"), fixed in glibc 2.39: once any module with
+TLS is dlopen'ed after a thread exists, that thread re-walks the slot-info list on every `__tls_get_addr` for a module
+slot it has not allocated. Which module triggered it was not identified (libfabric references dlopen; LCI's
+registration cache brings UCX's memory hooks).
+
+Remedy, measured: build the shared runtime with `-ftls-model=initial-exec` (CMake: `-DCMAKE_C_FLAGS=-ftls-model=initial-exec
+-DCMAKE_CXX_FLAGS=-ftls-model=initial-exec`). The call count goes to 0, the dynamic linker disappears from the profile,
+and the applications speed up 1.07-1.11x (Task Bench and SSSP, one process per node and eight per node alike), FoF3
+1.02x. The model is legal for any library loaded at program start (DT_NEEDED), which a runtime is; it is not legal for
+a library that is only dlopen'ed. It is a flat per-access tax, so it does not explain a layout-dependent slowdown; it
+was found while looking for one.
+
+How to see it: `perf report --sort dso`; if `ld-linux-x86-64.so.2` is above a few percent in a steady-state profile,
+TLS is being resolved the slow way. `ldd --version` tells you whether the glibc is older than 2.39.
+
+## Microbenchmark pairing with an odd PE count per process, and the many_to_one counter result (2026-10-12, Frontier)
+
+- A pingpong that pairs PE p with p^1 keeps every pair inside one process only when the PEs per process is even. On
+  Frontier's 56 usable cores the natural 8 x 7 layout is odd, and the pair (6, 7) of every process straddles two
+  processes: the mean one-way latency read 0.68 us against 0.27-0.34 us for every even layout. Check the pairing
+  arithmetic against the layout before reading a latency table; add an even layout (8 x 6 here) rather than explain
+  the number.
+- many_to_one (every PE of a process sends 400k messages to PE 0, no flow control): the receiver's cost per message on
+  reconverse main grew with the number of producers in the process, 382 ns at 6, 581 at 27, 908 at 55. The
+  `pe-queue-count` branch (atomic length counter on the per-PE queue) held it at 340-435 ns, 2.5x at 55 producers,
+  nothing at 7 or fewer. jemalloc 5.4.0 via LD_PRELOAD alone took 55 producers from 908 to 667 ns, and the two together
+  to 298 ns: at that fan-in the receiver's `free` into 55 foreign glibc arenas is a second, independent cost. The
+  counter costs 0.02-0.04 us per one-way hop on the pingpong (3-12%).
+- Standalone Converse tests do not call `CmiInitCPUAffinity`, so `+pemap` is inert for them unless the test calls it
+  (pingpong_multipairs does; many_to_one did not). Either add the call or bind with Slurm.

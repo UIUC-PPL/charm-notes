@@ -909,3 +909,28 @@ costs backfill opportunities, and on this machine that cost hours rather than mi
 - Note the OFI build's automatic affinity is not a drop-in either: `+setcpuaffinity` there assigns PE i to OS
   core i starting at core 0, which Frontier reserves, and the run aborts with "CmiSetCPUAffinity failed to bind
   PE #0 to PU P#0". For one process per node on that build use the explicit 56-core map recorded above.
+
+## Hardware counters and profiling on compute nodes (2026-10-12)
+
+Measured in-job (perf 6.4.0, kernel 6.4.0-150700.53.78-default, glibc 2.38):
+
+- `perf_event_paranoid` is 1: per-process `perf stat` and user-space `perf record` (fp and dwarf call graphs) work
+  without `-a`; kernel symbols are restricted (kptr_restrict), so kernel frames print as raw addresses.
+- The named AMD events (`ls_dmnd_fills_from_sys.*`) are unknown to this perf (no event JSON for family 19h model 30h).
+  Raw PMCx043 umasks work: `r0243` int_cache (L3 or another L2 in the CCX), `r0443` ext_cache_local (another CCX, same
+  NUMA node), `r0843` mem_io_local, `r1043` ext_cache_remote, `r4043` mem_io_remote. Five hardware counters; more
+  events are multiplexed. The `amd_l3` uncore PMU exists but takes raw `event=,umask=` only and cannot be attributed to
+  one process without `-a`.
+- `perf lock` and `perf trace` are unusable (no access to /sys/kernel/tracing); `perf record -e context-switches
+  -e page-faults -c N --call-graph dwarf -m 4096` is the substitute for "who sleeps on a lock" (the default mmap
+  buffer lost 96% of samples at `-c 20` on a 56-thread process; `-m 4096 -c 100` lost none). strace exists.
+- No AMD uProf, no likwid. Modules: papi (default 7.1.0.4), hpctoolkit, omnitrace, Cray perftools.
+- THP: `enabled` is `never`, `defrag` is `madvise`.
+- A node reports 128 CPUs, NPS4 (NUMA node n = cores 16n-16n+15 and their SMT siblings), 8 L3 instances of 32 MB.
+- slurmctld timeouts: on 2026-10-12 roughly one `srun` in fifteen failed with `Unable to confirm allocation for job
+  <id>: Socket timed out on send/recv operation` before any task started (exit 1, about 35 s), and `squeue`/`sacct`
+  calls failed the same way. Gate every step on the banner, retry that signature once inside the job script, and
+  treat a failed `squeue` as "still running" in any watcher loop.
+- perf data of a 56-thread process at `-F 99 --call-graph dwarf,8192` is 120-420 MB per 10 s run; write it to Lustre.
+- jemalloc is not installed anywhere (no module, no system package, no Spack entry); build 5.4.0 from the release
+  tarball (`./configure --prefix=... && make -j8 && make install`, under a minute).
