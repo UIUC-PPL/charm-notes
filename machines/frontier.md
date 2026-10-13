@@ -613,7 +613,7 @@ the Build bootstrap section above describes). Source and build go in the
 project home area, per the Layout section, not Lustre:
 
     mkdir -p /ccs/proj/csc710/$USER/software && cd $_
-    git clone --branch reviewed-with-reconverse --recurse-submodules \
+    git clone --branch recharm --recurse-submodules \
         https://github.com/charmplusplus/charm charm-siterun && cd charm-siterun
     source /opt/cray/pe/lmod/lmod/init/bash      # `module` is undefined in scripts
     module load PrgEnv-gnu cmake hwloc python    # gcc 13.2, cmake 3.30.5, hwloc 2.11.1, python 3.13

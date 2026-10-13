@@ -60,11 +60,11 @@ project status out of this file; it belongs in per-project memory.
 
 | Path | Runtime | Purpose |
 |---|---|---|
-| `~/software/clusterFinding/charm` (build `netlrts-darwin-arm8-smp`) | classic Converse, mainline main | paratreet2 laptop builds (`CHARM_HOME` points at the build dir). **MIXED — see warning below; benchmark against the build dir, not this path.** |
-| `~/software/recharm/charm` (build `reconverse-darwin-arm8`) | reconverse, branch `reviewed-with-reconverse` (switched 2026-09-13 from the stale `reconverse-specific-build`; reconverse is the `contrib/reconverse` submodule; charm tip `ea8f4b717`, submodule `b30ad31` as of 2026-09-26). The `reconverse-darwin-arm8` build dir was rebuilt from scratch 2026-09-26 with `./build charm++ reconverse-darwin-arm8 --with-production -j8` (previous build kept as `reconverse-darwin-arm8.bak-20260926`); pingpong and FoF3 smoke pass, no DYLD_LIBRARY_PATH needed. App objects compiled against the older build must be `make clean`-ed first: `CmiPrintf` is now `extern "C"` and stale objects fail to link. Coverage work lives in the separate worktree `~/software/recharm/coverage/charm-wt` | local reconverse testing on the reviewed line |
+| `~/software/clusterFinding/charm` (build `netlrts-darwin-arm8-smp`) | classic Converse, branch `classic` (was `main` until 2026-10-13) | paratreet2 laptop builds (`CHARM_HOME` points at the build dir). **MIXED — see warning below; benchmark against the build dir, not this path.** |
+| `~/software/recharm/charm` (build `reconverse-darwin-arm8`) | reconverse, branch `recharm` (renamed from `reviewed-with-reconverse` 2026-10-13, which was switched to 2026-09-13 from the stale `reconverse-specific-build`; reconverse is the `contrib/reconverse` submodule; charm tip `bc22be697`, submodule `988a8b4` as of 2026-10-13). The `reconverse-darwin-arm8` build dir was rebuilt from scratch 2026-09-26 with `./build charm++ reconverse-darwin-arm8 --with-production -j8` (previous build kept as `reconverse-darwin-arm8.bak-20260926`); pingpong and FoF3 smoke pass, no DYLD_LIBRARY_PATH needed. App objects compiled against the older build must be `make clean`-ed first: `CmiPrintf` is now `extern "C"` and stale objects fail to link. Coverage work lives in the separate worktree `~/software/recharm/coverage/charm-wt` | local reconverse testing on recharm |
 | `~/software/seedbalancing/charm` (build `reconverse-darwin-arm8`) | reconverse | seed-balancing runtime project |
 | `~/software/charm/netlrts-darwin-arm8-smp` | classic | OLD, non-production build — never use for benchmarking |
-| `~/software/charm-sumdbytes/charm` (build `netlrts-darwin-arm8`) | classic, upstream main | fresh clone for the .sumd message-bytes work (charm#3937); built with `-DTRACING=1` |
+| `~/software/charm-sumdbytes/charm` (build `netlrts-darwin-arm8`) | classic, branch `classic` (was `main`) | fresh clone for the .sumd message-bytes work (charm#3937); built with `-DTRACING=1` |
 
 
 **`~/software/clusterFinding/charm` is a MIXED build (found 2026-09-22).**
@@ -100,6 +100,18 @@ rebase. Fallbacks kept until further confidence:
 `~/software/recharm/charm/reconverse-darwin-arm8.bak-20260824` (the
 pre-catch-up build) and the worktree `~/software/recharm/charm-upstream-test`
 (upstream tip + its own fresh build) — delete both when no longer needed.
+
+**Branch names since 2026-10-13:** charm `main` is now `classic` (frozen
+classic line, 8.1.0 released 2026-10-13) and `reviewed-with-reconverse` is
+now `recharm` (default). Laptop clones were repointed the same day without
+checkouts: `~/software/recharm/charm` and `~/software/charm-renewal/charm`
+track `origin/recharm`; `~/software/clusterFinding/charm` and
+`~/software/charm-sumdbytes/charm` track `origin/classic`.
+`~/software/seedbalancing/charm` still tracks `reconverse-specific-build`
+(its remote uses an ssh key that is not loaded; untouched). Recipe used,
+from inside a clone, no checkout needed: `git branch -m
+reviewed-with-reconverse recharm && git branch -u origin/recharm recharm &&
+git remote set-head origin -a && git fetch --prune`.
 
 **Record-replay on reconverse (2026-08-25): WORKS.** Build at
 `~/software/recharm/charm/reconverse-darwin-arm8-replay` (charm-on-

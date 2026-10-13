@@ -2998,7 +2998,7 @@ checkout:
   branches use `gh pr merge --squash` with the default message, which gives
   "title (#NNNN)" subjects. Do not pass `--delete-branch` while a worktree
   still has the branch checked out; delete the remote branch afterwards.
-- **Same change on two base branches** (main and reviewed-with-reconverse):
+- **Same change on two base branches** (classic and recharm; named main and reviewed-with-reconverse until 2026-10-13):
   keep them as two PRs with two worktrees and rebase each onto its own
   base; a cherry-pick between them is clean as long as the change lives in
   files the two branches share unchanged (ck-libs/cache did).
@@ -3142,3 +3142,17 @@ TLS is being resolved the slow way. `ldd --version` tells you whether the glibc 
   counter costs 0.02-0.04 us per one-way hop on the pingpong (3-12%).
 - Standalone Converse tests do not call `CmiInitCPUAffinity`, so `+pemap` is inert for them unless the test calls it
   (pingpong_multipairs does; many_to_one did not). Either add the call or bind with Slurm.
+
+## Branch rename 2026-10-13: main -> classic, reviewed-with-reconverse -> recharm
+
+- What was renamed: on charmplusplus/charm, `main` became `classic` (the frozen classic-Converse line; Charm++ 8.1.0
+  was released from it on 2026-10-13) and `reviewed-with-reconverse` became `recharm` (the reconverse-based line, now
+  the default branch, future Charm++ 9.0). New clone recipes use `--branch recharm` or `--branch classic`.
+- GitHub redirects the old names for existing clones, so a `git pull` on a clone still tracking the old name succeeds
+  without any message. How long the redirect lasts is not under our control, so do not rely on it: run
+  `git remote show origin` to see what the remote HEAD points at and which remote branch each local branch tracks.
+- Repointing a clone needs no checkout (shown for recharm; for classic substitute `main` / `classic`):
+  `git branch -m reviewed-with-reconverse recharm && git branch -u origin/recharm recharm && git remote set-head origin -a && git fetch --prune`.
+- Workflow files are NOT rewritten by a rename: branch filters in `.github/workflows/*.yaml` keep whatever names they
+  list (reconverse-ci.yaml lists both names). Check the `on: push/pull_request: branches:` lists after a rename.
+- Spack recipes pinned to `branch="main"` now build classic, not the reconverse line.

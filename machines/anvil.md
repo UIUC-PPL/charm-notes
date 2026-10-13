@@ -247,13 +247,13 @@ For sessions setting up a NEW charm/reconverse tree (e.g. a branch under
 review) rather than using `recharm/`. Every fact here is expanded in the
 sections around it; this is the assembled path.
 
-**Submodule era (2026-09-13).** On `reviewed-with-reconverse` reconverse is a
+**Submodule era (2026-09-13).** On `recharm` (named `reviewed-with-reconverse` until 2026-10-13) reconverse is a
 git SUBMODULE at `contrib/reconverse`. There is no separate reconverse clone
 and no `--with-fetch-reconverse-dir` flag; the separate-clone recipe this
 section used to carry is obsolete for this branch.
 
     cd $PROJECT/$USER/software           # NEVER $HOME (25 GB quota)
-    git clone --branch reviewed-with-reconverse --recurse-submodules \
+    git clone --branch recharm --recurse-submodules \
         https://github.com/charmplusplus/charm <dir> && cd <dir>/
     module load python/3.9.5 hwloc       # BOTH required; failures are silent
     ./build charm++ reconverse-linux-x86_64 -j8 -g \
