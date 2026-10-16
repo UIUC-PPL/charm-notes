@@ -201,6 +201,12 @@ reconverse is `lcrun -n <procs> env DYLD_LIBRARY_PATH=<build>/lib ./app
 ## macOS platform hazards (details in
 ~/software/charm-notes/charm_best_practices.md)
 
+- No `timeout`/`gtimeout` on this Mac (coreutils not installed). `perl -e 'alarm N;
+  exec @ARGV'` does NOT bound a charm run: the alarm is lost across exec and the
+  hung binary keeps spinning (2026-10-16: five hung 4-PE AMPI probes left the
+  load average at 380). Run the test in the background, `sleep N`, then
+  `pkill -9 -f <binary>`; and always `ps | grep <binary>` after a batch of
+  timed runs.
 - SIP strips DYLD_LIBRARY_PATH under lldb; set it inside lldb via
   `settings set target.env-vars ...`.
 - Apple clang defaults to C++98; charm darwin arch files must add
