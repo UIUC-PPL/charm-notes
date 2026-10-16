@@ -29,6 +29,8 @@ inspection on the machine, not inferred.
 |---|---|---|---|
 | `$HOME` | `/home/$USER` | **25 GB** | Too small for a Charm build. Do not build here. |
 | `$PROJECT` = `$WORK` | `/anvil/projects/x-asc050025` | 5 TB, 1M files | Where builds and data belong. |
+
+**Project FILE quota is full (2026-10-16): 1.0M of 1.0M files, shared by the whole allocation.** A fresh `git clone` under `$PROJECT` fails with "Disk quota exceeded". Until someone frees files (check `myquota`; a charm tree with build directories is several hundred thousand files), new temporary trees go in `$SCRATCH` (313K of 1M files used that day), accepting the periodic purge. Example: the classic AMPI mpich-test tree at `$SCRATCH/ampi-mpich-classic`.
 | `$SCRATCH` = `$RCAC_SCRATCH` = `$CLUSTER_SCRATCH` | `/anvil/scratch/$USER` | 100 TB, 1M files | Purged periodically; use for run output, not installs. |
 
 Convention on this account: work lives in `$PROJECT/$USER/software/`, with
