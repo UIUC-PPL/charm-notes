@@ -232,6 +232,13 @@ mzu-delta-cpu; job script `audit.sbatch` in
   ```sh
   export FI_MR_CACHE_MONITOR=userfaultfd FI_CXI_RX_MATCH_MODE=hybrid
   ```
+  **No longer needed from reconverse b23a7fb (reconverse #281, in charm
+  from 30be41e21 / v9.0.0-alpha2, 2026-10-19):** reconverse turns LCI's
+  registration cache off on OFI and sets hybrid RX matching itself.
+  Verified on 2026-10-19 (job 23018835, 2 nodes, that tree): the site-run
+  set, pingpong and megatest ran with neither variable set and the logs
+  held no libfabric or LCI warning. Keep the export only for builds
+  older than that pin.
   `FI_MR_CACHE_MONITOR=disabled` or `FI_MR_CACHE_MAX_COUNT=0` removes the
   registration error but then aborts with "LE resources not recovered
   during flow control. FI_CXI_RX_MATCH_MODE=[hybrid|software] is
