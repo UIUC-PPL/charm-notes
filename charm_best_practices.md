@@ -3156,3 +3156,13 @@ TLS is being resolved the slow way. `ldd --version` tells you whether the glibc 
 - Workflow files are NOT rewritten by a rename: branch filters in `.github/workflows/*.yaml` keep whatever names they
   list (reconverse-ci.yaml lists both names). Check the `on: push/pull_request: branches:` lists after a rename.
 - Spack recipes pinned to `branch="main"` now build classic, not the reconverse line.
+
+## Classic buildold flattens src/conv-core into include/ (2026-10-17)
+
+`src/scripts/gatherflat` copies every file found under src/conv-core (any
+depth) into the build's include/ by basename, so a new header anywhere
+under src/conv-core with the same basename as an existing one (for example a
+reconverse-compat `conv-config.h`) silently replaces the real one in classic
+buildold builds, in directory-traversal order. Keep compatibility shims
+outside src/conv-core (charm PR #4051 moved its shim under
+src/libs/ck-libs/tcharm/reconverse-compat/). The CMake build is unaffected.

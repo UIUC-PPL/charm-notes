@@ -238,3 +238,12 @@ reconverse is `lcrun -n <procs> env DYLD_LIBRARY_PATH=<build>/lib ./app
   push after. Old copies in ~/software/tutorialcharmclaude/notes/ are
   pointer stubs.
 - `~/software/DiffusionGraphfiles/` — deeper seed-balancing handoff notes.
+
+## No Fortran compiler on this Mac (found 2026-10-17, AMPI stage 0 PR)
+
+There is no gfortran (MacPorts gcc not installed), so CMake sets
+CMK_CAN_LINK_FORTRAN=0 and every Fortran-related path (ckmainf, ampif90,
+the FTN_NAME mangling in charm-api.h, tests/ampi/fallreduce and the Fortran
+privatization variants) is silently skipped here. Three of the four defects
+Linux CI found in charm PR #4051 were of this kind. Treat Fortran as
+untested locally; rely on the Linux CI jobs (ubuntu runners have gfortran).
