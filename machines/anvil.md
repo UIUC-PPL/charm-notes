@@ -502,6 +502,19 @@ configuration takes ~8 s wall, so repeats are cheap — use them, phaseA max has
 `wholenode` (`TRESBillingWeights=CPU=1.0`), so there is no reason to queue for
 `wholenode` for single-node work.
 
+**Two-node `debug` jobs can wait a day (2026-10-18/19).** A `-p debug -N 2
+--exclusive -t 01:30:00` job submitted 2026-10-18 13:29 EDT never started: the
+estimate slipped from 4 h to three days (two of debug's 17 nodes drained, the
+rest shared by 1-node jobs, reason "Priority" / "Insufficient resources in
+topology unit") and it was cancelled after 24 h. `sbatch --test-only` at submit
+time estimated 2 nodes / 1.5 h on `standard` for the same evening and on
+`wholenode` two days out, so for a 2-node CPU job check `--test-only` on
+`standard` and `debug` and take the earlier one; alpha1's 2-node `debug` job on
+2026-10-16 waited 4 h. A 1-node debug job (`-N 1 --ntasks-per-node=2
+--cpus-per-task=16`, two processes on one node, `NODES=1` for the site-run
+script) was estimated 2 h out on 2026-10-19 and is the fallback when the
+2-node purpose is Linux build and launch checks rather than inter-node traffic.
+
 **It does not reliably grant in seconds (2026-09-12).** An earlier revision of
 this file said it did; that is false as a general statement. On 2026-09-12
 `shared` had 22,636 pending jobs and the estimated start for an exclusive
