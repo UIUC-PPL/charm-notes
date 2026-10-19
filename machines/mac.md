@@ -187,6 +187,9 @@ reconverse is `lcrun -n <procs> env DYLD_LIBRARY_PATH=<build>/lib ./app
   interference), or 7-8 procs x 1 worker are all valid TIMING
   configurations on this laptop (Kale, 2026-07-25). Classic netlrts
   remains limited to 2 procs x 2 PEs for timing.
+- zsh is the Claude shell: `for c in "-a 1" "-b"; do ./app $c` passes each
+  string as ONE argument; use `${=c}` to word-split. Unmatched globs abort the
+  command (`setopt nonomatch`); `$VAR:x` is a history modifier (`${VAR}:x`).
 - Never start two `lcrun` jobs at the same time on this laptop (found
   2026-10-08 running a ChaNGa test and its baseline side by side): both
   jobs stall before the first step, one process of each spins at 100%

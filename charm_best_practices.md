@@ -3166,3 +3166,30 @@ reconverse-compat `conv-config.h`) silently replaces the real one in classic
 buildold builds, in directory-traversal order. Keep compatibility shims
 outside src/conv-core (charm PR #4051 moved its shim under
 src/libs/ck-libs/tcharm/reconverse-compat/). The CMake build is unaffected.
+
+## Multi-process lcrun jobs do not end when one process dies (2026-10-19)
+
+Under `lcrun -n 2`, a process that ends alone leaves the other spinning at
+full CPU forever (reconverse #285: CmiAbort calls abort() locally and no
+PMI abort reaches the launcher). Two triggers seen on the Mac: a CkAbort on
+one process (a test that is expected to abort), and `./app ... 2>&1 | grep -q
+pattern`, where grep exits at the first match, the writer dies of SIGPIPE,
+and the peer spins. Consequences: in a multi-process sweep an expected abort
+shows up as a timeout, not a failure; make grep read to the end (`grep
+pattern > /dev/null`, no `-q`), and run abort cases single-process only
+(`ifeq ($(TESTRUN_PROCS),)` in the Makefile).
+
+## Stale test objects after runtime header changes (2026-10-18/19)
+
+A test directory built against older headers (e.g. before CkArrayOptions or
+CkMigratable changed) fails with misleading runtime errors ("You must set
+usesAtSync=true", a hang in a ck-libs test with no diagnostic). Test
+Makefiles depend on the .C only. `make clean` in the test directory before
+trusting any failure after a runtime rebuild; ck-libs modules (collide) are
+built by `./build LIBS`, not by `./build charm++`, and keep stale archives.
+
+## Before merging a PR, read its new comments (2026-10-19)
+
+`reviewDecision`/checks say nothing about a review posted as an issue
+comment. A PR was merged six minutes after an eight-item review comment
+landed. `gh pr view N --comments` (or the comments JSON) before `gh pr merge`.
