@@ -270,3 +270,17 @@ mzu-delta-cpu; job script `audit.sbatch` in
 - **Moving large inputs.** Anvil to Delta, a 2.9 GB file (2902376480 B)
   streamed as `ssh anvil cat <f> | ssh delta 'cat > <f>'` through the
   laptop's shared ssh connections took 144 s; check md5 on both ends.
+
+## CCS from a laptop to a running job (2026-10-20)
+
+Reconverse has no charmrun relay: PE 0 of the job listens on its compute
+node. Give the job a fixed port (`++server ++server-port 1234`; the output
+prints `ccs: Server IP = <addr>, Server port = 1234`), then forward from the
+laptop through the login node, `ssh -L 1234:<node>:1234 delta`, and point
+the client at `localhost 1234`. Verified with examples/converse/ccstest
+(server under `srun --mpi=pmix -n 2 ./server +pe 4` on cpu-interactive, job
+23066028, node cn095; client built on the Mac against the local reconverse
+build): replies from all four PEs, both from the laptop through the forward
+and from the login node directly. Compute nodes accept TCP from the login
+nodes; no firewall rule got in the way. The server never exits on its own,
+so `scancel` the job when done. The same path serves liveViz.
