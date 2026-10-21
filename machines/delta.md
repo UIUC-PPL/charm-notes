@@ -296,3 +296,15 @@ mux commands instead: `ssh -O forward -L port:node:port delta` to add,
 shows a stale one owned by the master's pid). The laptop driver
 `~/software/recharm/lv-delta.sh` does submit, wait, forward, client and
 cleanup this way; `--ccs` is its no-GUI self-check (about 40 s end to end).
+
+**2026-10-21 17:20-17:28: /work/hdd write failures on dt-login02 and a dropped master.**
+A fresh `git clone` into /work/hdd/mzu/lkale failed at checkout with "unable to
+stat just-written file ... No such file or directory" and `git restore` gave
+"unable to write file" for other paths; quotas were fine (685 GB of 1000 GB,
+1.23M of 3.4M files) and a small test write succeeded; the node's kernel log had
+"LustreError ... start_statahead_thread() can't start ll_sa thread, rc: -4". The
+ControlMaster then dropped mid-clone (ssh 255), and the next BatchMode command
+hit the Duo prompt and failed (one failed login counted). Fallback for a build
+tree: /work/nvme/mzu/lkale, or another login node. Always `ssh -O check delta`
+before a long remote step, and keep BatchMode=yes so a dropped master fails
+fast instead of prompting.
