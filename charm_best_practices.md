@@ -3193,3 +3193,29 @@ built by `./build LIBS`, not by `./build charm++`, and keep stale archives.
 `reviewDecision`/checks say nothing about a review posted as an issue
 comment. A PR was merged six minutes after an eight-item review comment
 landed. `gh pr view N --comments` (or the comments JSON) before `gh pr merge`.
+
+## CkAssert arguments vanish in production builds; cmake builds ck-libs only under TARGET=LIBS (2026-10-21, appSpector)
+
+- `CkAssert(expr)` is `CmiAssert`, which is `((void)0)` when
+  `CMK_ERROR_CHECKING` is 0 (every `--with-production` build). An
+  expression with a side effect inside it is simply not run. Found in
+  `src/ck-perf/trace-utilization.C`: `CkAssert(numBins == buf.pop<int>())`
+  skipped the pop in production, every later field parsed four bytes off,
+  and the reducer overran its buffer (segfault in `mergeCompressedBin` on
+  the first collected second). Grep for `CkAssert(.*\(` with a call
+  inside when a production-only crash appears in code that passes
+  error-checking builds.
+- `./build charm++ reconverse-darwin-arm8 ...` does not build
+  `src/libs/ck-libs` (liveViz, NDMeshStreamer, ...): those targets exist
+  only with `TARGET=LIBS`. To add them to an existing build dir without
+  `--force`: `cmake -DTARGET=LIBS . && make -j8` inside the build dir
+  (incremental, about a minute on the laptop). `libmoduleliveViz.dep`
+  then says `-ljpeg` with no library path, so on this Mac programs that
+  use liveViz link with `-L/opt/local/lib`.
+- Array-element delivery traces `beginExecute`/`endExecute` twice,
+  nested (`_invokeEntry` in ck.C around the detailed begin in
+  cklocation.C). A Trace module must count depth (trace-summary does);
+  trace-utilization did not and attributed nothing to the inner end,
+  printing `WARNING: epIdx=-2` once per message.
+- The `.util.sts` (and other trace) files land next to the binary, not
+  in the run directory: `traceroot` defaults to argv[0].
