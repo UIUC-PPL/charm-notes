@@ -1002,3 +1002,18 @@ inside Slurm jobs; each one cost a job cycle.
   (`+pemap L0-3`), which renumber within the allowed set — the opposite of
   the full-node case in the validated-pemap section, where OS indices are
   the correct choice.
+
+## LCI pin b5d9ea97 (reconverse #297, 2026-10-20) raises the toolchain floor
+
+LCI master since 2026-09 needs Python >= 3.8 (its binding generator uses the
+walrus operator) and CMake >= 3.21 (C_STANDARD 17 in its vendored ucx
+CMakeLists). Anvil's defaults are python3 3.6.8 and cmake/3.20.0, the only
+cmake module; with them the reconverse build dies at configure ("Cannot find
+source file .../src/binding/generated/binding.cpp", then "C_STANDARD is set
+to invalid value '17'"). Working environment for the login-node build:
+`module load gcc python` (3.9.5) and a pip cmake,
+`pip install --user cmake==3.28.*` (lands in ~/.local/bin; installed
+2026-10-20 while checking charm PR #4063), `PATH=$HOME/.local/bin:$PATH`.
+With that, `./build charm++ reconverse-linux-x86_64 --with-production -j16`
+takes about 565 s on the login node and megatest +pe 4 passes. The previous
+pin ca88ce2 built with cmake 3.20.
