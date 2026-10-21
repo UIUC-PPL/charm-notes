@@ -284,3 +284,15 @@ build): replies from all four PEs, both from the laptop through the forward
 and from the login node directly. Compute nodes accept TCP from the login
 nodes; no firewall rule got in the way. The server never exits on its own,
 so `scancel` the job when done. The same path serves liveViz.
+
+**Port forwards through the ssh master (2026-10-20).** With the
+ControlMaster setup, `ssh -f -N -L port:node:port delta` registers the
+listener inside the MASTER process; killing that client leaves the
+listener in place, and the next `ssh -L` on the same port falls out of the
+mux ("mux_client_forward: forwarding request failed: Port forwarding
+failed") and tries a fresh Duo login, which fails non-interactively. Use the
+mux commands instead: `ssh -O forward -L port:node:port delta` to add,
+`ssh -O cancel -L port:node:port delta` to remove (`lsof -nP -iTCP:port`
+shows a stale one owned by the master's pid). The laptop driver
+`~/software/recharm/lv-delta.sh` does submit, wait, forward, client and
+cleanup this way; `--ccs` is its no-GUI self-check (about 40 s end to end).
