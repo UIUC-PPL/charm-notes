@@ -308,3 +308,11 @@ hit the Duo prompt and failed (one failed login counted). Fallback for a build
 tree: /work/nvme/mzu/lkale, or another login node. Always `ssh -O check delta`
 before a long remote step, and keep BatchMode=yes so a dropped master fails
 fast instead of prompting.
+
+**cpu-interactive allows ONE submitted job per user (QOSMaxSubmitJobPerUserLimit,
+2026-10-21).** A second `sbatch` is refused outright, so sessions sharing the
+account collide: the appSpector session's 1-node job (23109890) blocked a 2-node
+verification job here. Use `-p cpu` for the second job (it queued at once,
+23109902) or coordinate. Also: a `+pe` build against a reconverse pin before
+#294 (e7e6bba23) prints no stack trace on CmiAbort; the trace arrives with the
+pin bump, so its absence is not a build defect.
