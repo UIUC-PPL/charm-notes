@@ -196,6 +196,11 @@ reconverse is `lcrun -n <procs> env DYLD_LIBRARY_PATH=<build>/lib ./app
   and its peer sits idle, and neither finishes. The same two commands
   run one after the other each finish in a few minutes. Single-process
   runs may overlap with one `lcrun` job.
+- The same rule applies to delegated agents: three Opus agents running
+  reconverse ctest (lcrun multinode entries) in parallel on 2026-10-22
+  produced spurious failures in IPC shared-memory setup and the LCI PMI
+  bootstrap (load average 16-100); each reran clean alone. Give at most one
+  agent an lcrun-running step at a time, or make the others wait.
 - After any killed or timed-out multi-process run, orphaned node
   processes accumulate: `pkill -9 -f <app>; pkill -9 -f charmrun`, then
   check `uptime` before trusting any timing (load averaged 192 once from
