@@ -1017,3 +1017,9 @@ to invalid value '17'"). Working environment for the login-node build:
 With that, `./build charm++ reconverse-linux-x86_64 --with-production -j16`
 takes about 565 s on the login node and megatest +pe 4 passes. The previous
 pin ca88ce2 built with cmake 3.20.
+
+**2026-10-21: Anvil unreachable from ~17:15 to ~23:10 CDT (ssh timed out on all
+eight login addresses), and after it came back every partition was DOWN
+(sinfo: standard, wide, wholenode, shared, debug, gpu, highmem, ai, profiling),
+so jobs queue with reason PartitionDown. Site-wide outage/maintenance; check
+the RCAC status page before assuming a local network problem.**
