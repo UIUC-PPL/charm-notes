@@ -250,3 +250,16 @@ the FTN_NAME mangling in charm-api.h, tests/ampi/fallreduce and the Fortran
 privatization variants) is silently skipped here. Three of the four defects
 Linux CI found in charm PR #4051 were of this kind. Treat Fortran as
 untested locally; rely on the Linux CI jobs (ubuntu runners have gfortran).
+
+## Tk from Python on this Mac: a crashed process blocks all later Tk windows (2026-10-21)
+
+After a Python.app process using tkinter aborted (Tcl panics with
+`Tcl_AsyncDelete` when a Tk object is garbage-collected on a non-main
+thread), every later `tk.Tk()` hung inside a modal macOS "reopen
+windows?" alert (`NSPersistentUIRestorer promptToIgnorePersistentState`),
+visible on screen as "python crashed" dialogs. `defaults write
+org.python.python ApplePersistenceIgnoreState -bool YES` is now set and
+stops the prompt. Headless Tk tests should run with
+`faulthandler.dump_traceback_later(N, exit=True)` so a hang shows its
+stack instead of leaving a dialog on the screen, and Tk roots must stay
+referenced until interpreter shutdown.
