@@ -1023,3 +1023,13 @@ eight login addresses), and after it came back every partition was DOWN
 (sinfo: standard, wide, wholenode, shared, debug, gpu, highmem, ai, profiling),
 so jobs queue with reason PartitionDown. Site-wide outage/maintenance; check
 the RCAC status page before assuming a local network problem.**
+
+## `$WORK` is predefined on Anvil (2026-10-24)
+
+The login environment sets `WORK=/anvil/projects/x-asc050025` (the same as
+`$PROJECT`). A script that uses `WORK` as its own optional override
+(`WORK=${WORK:-default}`) silently builds in the project ROOT; appSpector's
+cluster/setup.sh did exactly that and now prefixes its overrides
+(`APPSPECTOR_WORK`). Also: a cmake build directory cannot be moved
+afterwards (CMakeCache.txt and charmc embed absolute paths); rebuild in the
+right place instead of `mv`.
