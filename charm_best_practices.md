@@ -3219,3 +3219,29 @@ landed. `gh pr view N --comments` (or the comments JSON) before `gh pr merge`.
   printing `WARNING: epIdx=-2` once per message.
 - The `.util.sts` (and other trace) files land next to the binary, not
   in the run directory: `traceroot` defaults to argv[0].
+
+## A stale test binary also hides a runtime FIX, not only a break (2026-10-25, recharm)
+
+Companion to "Stale test objects after runtime header changes" above. After
+rebuilding the runtime with a fix for an array-broadcast hang, the test still
+hung 10 of 10 and the fix looked wrong for an hour. The test binary was the
+old one: the test Makefile depends on the .C and .ci only, and the runtime
+libraries are not in its dependency list, so `make` said "up to date" and ran
+a binary linked against the unfixed libraries. Rule: after every runtime
+rebuild, `make clean && make` in the test directory before reading a result,
+whether the result is a failure or a pass.
+
+## Porting a library hang to a pure Charm++ test: copy the library's array options (2026-10-25, AMPI, charm #4092)
+
+An AMPI hang (non-blocking collectives outstanding across AMPI_Migrate under a
+balancer) did not reproduce in a pure Charm++ test in four variants: results
+to the mainchare, broadcast to the array, bound arrays as TCharm/ampi, a
+[nokeep] target. The missing ingredient was `CkArrayOptions`: AMPI and TCharm
+create their arrays with `setStaticInsertion(true)` and
+`setAnytimeMigration(false)`, which selects `CkArray::stableLocations`, a
+different broadcaster code path (no stored broadcasts, no epoch check). With
+those two calls copied, the test hung 50 of 50. When a library's behavior
+differs from a default-options test, diff the library's `CkArrayOptions`
+(and group/array creation flags) before suspecting message timing. The same
+options also decided a second finding: with stable locations, broadcasts were
+delivered out of order on reconverse, invisible in every default-options test.
