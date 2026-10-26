@@ -3245,3 +3245,30 @@ differs from a default-options test, diff the library's `CkArrayOptions`
 (and group/array creation flags) before suspecting message timing. The same
 options also decided a second finding: with stable locations, broadcasts were
 delivered out of order on reconverse, invisible in every default-options test.
+
+## AMPI/TCharm migration on macOS: heap from operator new does not migrate (2026-10-25)
+
+With `-memory isomalloc` on reconverse-darwin-arm8, `malloc` called from a
+migratable thread returns isomalloc memory (same address space region as the
+thread's stack) and migrates with the rank, but memory from C++ `operator new`
+(std::vector, std::string, `new T`) comes from the system malloc: libc++'s
+operator new lives in libc++.dylib and binds to libsystem's malloc, so the
+executable's isomalloc wrapper never sees it. After a cross-process migration
+such memory reads as zeros or faults (seen as SIGSEGV in MPI_Waitall reading a
+std::vector<MPI_Request> whose contents were all 0). Linux interposes malloc
+globally, so the Ubuntu CI job with `setarch -R` and lcrun exercises heap
+migration; the Mac cannot. Consequences: a test meant to run cross-process on
+the Mac keeps its buffers on the stack or uses malloc; and a Mac pass of a
+migration test says nothing about C++ heap data. Cross-process migration on the
+Mac also needs ASLR off per child (lcrun does not do it): a 20-line helper that
+posix_spawns argv[1..] with `_POSIX_SPAWN_DISABLE_ASLR` and is placed between
+`lcrun -n 2` and the program works.
+
+## After rebuilding lib/, `make clean` in the test directory (2026-10-25)
+
+Test Makefiles under tests/ list only their own objects as dependencies, so a
+`make` there after a library rebuild reports the binary up to date and the OLD
+code runs. Two rounds of "the fix did not help" were the stale binary. Also:
+an accidental `make clean` at the cmake build-dir root deletes every archive
+in lib/ (a shell line of the form `cd testdir && X; (make clean; ...)` runs the
+parenthesized part even when the cd fails); rebuild with `make -j8` there.
