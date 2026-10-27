@@ -3272,3 +3272,34 @@ code runs. Two rounds of "the fix did not help" were the stale binary. Also:
 an accidental `make clean` at the cmake build-dir root deletes every archive
 in lib/ (a shell line of the form `cd testdir && X; (make clean; ...)` runs the
 parenthesized part even when the cd fails); rebuild with `make -j8` there.
+
+## Attributing time to array elements inside a trace module (2026-10-27, appSpector)
+
+Learned while adding a per-object load handler ("CkPerfObjLoads") to
+`trace-utilization`, as a replacement for reading the load-balancing
+database (whose instrumentation a program may switch off with
+`LBTurnInstrumentOff()` or `+LBOff` to measure only the steps before a
+balancing step; a tool must not turn it back on).
+
+- A broadcast to a chare array arrives as ONE group entry on the array
+  manager, and its delivery loop runs every local element inside that
+  entry. The trace sees an outer begin/end pair (`_TRACE_BEGIN_EXECUTE`
+  from `_invokeEntry`) wrapping one detailed begin/end pair per element
+  (`_TRACE_BEGIN_EXECUTE_DETAILED` from `CkLocRec::invokeEntry`). A
+  module that attributes time at the OUTER pair, as trace-utilization's
+  per-entry bins do, charges the whole broadcast to one entry; per-object
+  time has to be measured between the element's own begin and end at its
+  own nesting depth (keep a small per-depth stack, subtract nested
+  children for exclusive time).
+- In the detailed begin hook, `obj` points at UNCONSTRUCTED memory for a
+  constructor entry: `CkArray::insertElement` allocates, then
+  `invokeEntry(elt, msg, ctorIdx)` runs the constructor through the entry
+  table. Reading `obj->ckGetID()` (myRec) there segfaults; reading
+  `thisArrayID` gives garbage. Key the element by the entry's chare type
+  (`_entryTable[ep]->chareIdx`) and the index ints in `CmiObjId`, which
+  are valid for every call.
+- liveViz creates a bound array `LiveVizBoundElement` with the same
+  indices as the user's array; a per-chare-type key keeps them apart (and
+  they report zero time).
+- `pkill -f "app +pe 2"` matches nothing: `-f` takes an extended regex and
+  `+` is a quantifier. Use `pkill -f "app -k 4"` or escape `\+`.
