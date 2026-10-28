@@ -3311,8 +3311,8 @@ nodegroup entry method call on the local PE showed up in Projections as entry
 0, `dummy_thread_ep`, from PE 0, and the real entries counted zero calls.
 `CkSendMsgBranchInline`/`CkSendMsgNodeBranchInline` prepared the envelope only
 under `CMK_ERROR_CHECKING`, and the tracer reads the entry index from the
-envelope. Fixed on branch `inline-trace-ep` of charm (PR against `recharm`,
-2026-10-28): prepare the envelope unconditionally. If a trace from an older
+envelope. Fixed on branch `inline-trace-ep` of charm (charm PR #4108 against
+`recharm`, 2026-10-28): prepare the envelope unconditionally. If a trace from an older
 runtime shows a solid `dummy_thread_ep` band where inline calls run, that is
 what it is; the time is real, only the label is wrong. Found in the AMT
 Barnes-Hut benchmark, whose idle-callback walks use inline entries.
