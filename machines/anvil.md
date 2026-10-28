@@ -1033,3 +1033,21 @@ cluster/setup.sh did exactly that and now prefixes its overrides
 (`APPSPECTOR_WORK`). Also: a cmake build directory cannot be moved
 afterwards (CMakeCache.txt and charmc embed absolute paths); rebuild in the
 right place instead of `mv`.
+
+## Default openmpi module breaks AMPI builds (found 2026-10-28)
+
+The default `openmpi/4.0.6` module exports `CC=mpicc CXX=mpiCC`. charm's CMake
+then compiles and links libreconverse, liblci and liblct with the OpenMPI
+wrappers, so each library has `libmpi_cxx.so.40` and `libmpi.so.40` as NEEDED
+entries. Charm++ programs run anyway, but every AMPI binary aborts before main
+with `AMPI_Initialized> AMPI has not been initialized!`: OpenMPI's C++ static
+constructor (`MPI::Intracomm::Intracomm` in libmpi_cxx) calls MPI_Initialized,
+which resolves to AMPI's definition. The existing `~/software/recharm/charm`
+build has the same mpiCC configuration. Before any `./build` for reconverse:
+`module unload openmpi; unset CC CXX` (gcc 11.2.0 is then used). Check with
+`ldd lib/libreconverse.so | grep mpi` (must print nothing). A clean AMPI build
+(`./build AMPI reconverse-linux-x86_64 --suffix=nompi --with-production -j16`)
+took 309 s on the login node. Also: the project file quota was 61% on
+2026-10-28, no longer full; `debug` (8 cores, 30 min) started after 30-70 min,
+`shared` estimated a two-week wait. Reconverse AMPI checkpoint/restart clone and
+logs: `/anvil/projects/x-asc050025/x-lkale/software/ampi-aslr`.
