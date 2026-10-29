@@ -29,6 +29,25 @@ Read `syntax_quick_ref.md` before writing new Charm++ code, and search
 `charm_best_practices.md` for the topic before proposing a design or a
 diagnosis — many entries exist because the obvious approach failed.
 
+## The manual and the charm repository's own documentation
+
+These notes are the fast layer: dated lessons, written while the evidence
+was fresh. The slow layer lives in the
+[charmplusplus/charm](https://github.com/charmplusplus/charm) repository
+and is the authority for anything it covers; read it there, or in a local
+clone if one is present.
+
+| Question | Read |
+|---|---|
+| What an application calls, what an option or a `.ci` construct means, the build command for a target | the manual, <https://charm.readthedocs.io> (source `doc/charm++/manual.rst`, `doc/converse/`, `doc/ampi/`, `doc/libraries/`) |
+| How the runtime works inside: data structures, protocols between PEs and processes, invariants, where in `src/` each piece lives | `doc/internals/` — one chapter per subsystem, index in `doc/internals/README.md` (object ids and element location, routing a send to an array element, array broadcasts and migrating elements; more as they are written) |
+| Why a design is the way it is, alternatives and measurements | the design documents under `doc/` that each internals chapter links (for example `doc/objid64-design.md`) |
+| Which tests exist and what they reach | `tests/`, `examples/`, `benchmarks/` (each has a `make test`), the CI subset in `.github/workflows/reconverse-ci.yaml`, and the weekly coverage of `src/` and reconverse at <https://charmplusplus.org/charm-coverage/> (tooling and traps in `coverage/README.md`) |
+
+When a note here and the manual or an internals chapter disagree, say so:
+the newer, dated one is usually right, and the disagreement is itself worth
+reporting to the maintainers.
+
 ## Searching charm_best_practices.md
 
 It is ~3,300 lines of dated sections, so do not read it whole. List the
@@ -67,6 +86,10 @@ module recipes, build commands, launcher idioms, filesystem layout,
 measured hazards. Load only the profile for the machine actually in use —
 identify it from the user, the hostname, or the environment, and ask if
 unclear. General lessons live in `charm_best_practices.md`, not in profiles.
+The profiles describe the maintainers' own accounts and directories; on a
+machine without a profile, or with a different account layout, treat the
+closest one as a template (module recipe, build command, launcher idiom)
+and copy it into a new profile rather than following its paths.
 
 ## LCI coverage
 
