@@ -1,6 +1,6 @@
 ---
 name: charm-notes
-description: Practitioner notes from the UIUC Parallel Programming Lab for Charm++, Converse, Reconverse, LCI and AMPI — hard-won runtime lessons, a syntax quick reference, reconverse investigation notes, and per-machine build/launch profiles (Anvil, Delta, Frontier, macOS). Use this skill whenever a task involves Charm++ code (.ci files, chares, groups, nodegroups, chare arrays, SDAG, reductions, CkCallback, quiescence detection, load balancing, pup, zerocopy/GPU), Converse or Reconverse runtime internals, the LCI communication layer, charmc or charm build options, Projections tracing, or building, launching and debugging Charm-based programs on clusters (srun, charmrun, lcrun, +pemap, SMP layout, affinity). Consult it before writing, reviewing or debugging such code, even if the user does not mention these notes.
+description: Practitioner notes from the UIUC Parallel Programming Lab for Charm++, Converse, Reconverse, LCI and AMPI — hard-won runtime lessons, a syntax quick reference, reconverse investigation notes, and per-machine build/launch profiles (Anvil, Delta, Frontier, macOS). Use this skill whenever a task involves Charm++ code (.ci files, chares, groups, nodegroups, chare arrays, SDAG, reductions, CkCallback, quiescence detection, load balancing, pup, zerocopy/GPU), Converse or Reconverse runtime internals, the LCI communication layer (LCI API, post_send/post_am/post_put, completion objects, progress, lcrun/PMI bootstrap, LCI_ATTR_* settings), charmc or charm build options, Projections tracing, or building, launching and debugging Charm-based programs on clusters (srun, charmrun, lcrun, +pemap, SMP layout, affinity). Consult it before writing, reviewing or debugging such code, even if the user does not mention these notes.
 ---
 
 # charm-notes
@@ -23,6 +23,7 @@ All paths below are relative to this skill's directory.
 | Reconverse quiescence-detection / completion latency at scale | `reconverse-qd-latency.md` |
 | Projections or other traces missing on reconverse | `reconverse-trace-shutdown.md` |
 | Core interference, preemption, pemap collisions | `reconverse-core-interference-monitor.md` |
+| LCI itself: API, completion semantics, protocols and size thresholds, bootstrap/launch, env and CMake knobs, packet pool, GPU, failures | `lci.md` (has a contents list; read the relevant sections) |
 
 Read `syntax_quick_ref.md` before writing new Charm++ code, and search
 `charm_best_practices.md` for the topic before proposing a design or a
@@ -69,10 +70,14 @@ unclear. General lessons live in `charm_best_practices.md`, not in profiles.
 
 ## LCI coverage
 
-The notes cover LCI as Reconverse's transport (devices, registration,
-completion, launch). They do not document the LCI API itself. For direct
-LCI programming questions, say so and work from the LCI sources and docs
-(github.com/uiuc-hpc/lci) when available rather than from memory.
+`lci.md` covers LCI directly: the API, done/posted/retry semantics (a
+*done* return does not signal the completion object), buffer ownership,
+protocol thresholds, bootstrap and launchers, configuration, and known
+errors in LCI's own docs. Each claim is labelled [ran], [code] or [docs] and
+tied to the LCI commit it was checked against. Reconverse-on-LCI lessons
+stay in `charm_best_practices.md`. Reconverse pins its own LCI, so for
+version-specific behaviour check `<build>/_deps/lci-src` and update
+`lci.md` when it disagrees.
 
 ## Adding lessons
 

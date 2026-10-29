@@ -628,6 +628,11 @@ reconverse/LCI.
 - LCI itself has no shared-memory path at all — no occurrence of `shm`,
   `loopback`, `same_node` or `intra_node` in its source. Do not expect the
   transport layer to notice locality for you.
+  **Update 2026-10-29:** out of date for current LCI. An experimental
+  intra-node shared-memory transport landed in LCI #176 (2026-07-18), but it
+  is compile-time OFF (`LCI_WITH_SHM`) and covers only slot-sized (128 B
+  default) messages, so default builds still go through the NIC. See
+  `lci.md` §11.
 - `CMK_USE_SHMEM` looks like the switch but is not sufficient: reconverse
   has the CONSUMER (`scheduler.cpp:27` polls `CmiPopIpcBlock`) and the
   implementation (`src/cmishmem.cpp`), but NO producer — nothing in
@@ -2604,6 +2609,13 @@ before quoting any multi-process pass -- including passes from a tier that
 has "been green for days".
 
 ## lcrun bootstraps through one shared directory per machine, and a dead run poisons it (2026-09-17)
+
+> **Update 2026-10-29:** fixed upstream by LCI #203 (`b5d9ea97`,
+> 2026-09-20). `lcrun` now gives each launch a private `mktemp -d`
+> directory via `LCT_PMI_FILE_DIR` and removes it on exit. Everything below
+> still applies to LCI pins older than `b5d9ea97`, and to the `file` backend
+> launched by hand without `LCT_PMI_FILE_DIR`. Check the pin in
+> `<build>/_deps/lci-src` (`git log -1 -- lcrun`). See `lci.md` §3.
 
 `lcrun` does not carry its own process manager: it sets
 `LCT_PMI_BACKEND=file,local` (lcrun:11-13) and lets LCT's file backend

@@ -22,6 +22,7 @@ documentation model:
 | `charm_best_practices.md` | Accumulated practitioner lessons: message-memory invariants, scheduler/runtime pitfalls, SMP and launch-layout traps, group/array creation ordering, reduction cost models, benchmarking discipline, macOS-specific hazards. |
 | `syntax_quick_ref.md` | Quick syntax lookup: chares, SDAG, groups, nodegroups, reductions, custom reducers, callbacks. |
 | `machines/*.md` | Per-machine environment profiles (folder layout, installed runtimes, run idioms, machine-specific hazards). Each machine loads only its own profile. |
+| `lci.md` | LCI reference: API and completion semantics, protocol thresholds, bootstrap/launch, configuration, sharp edges, errors in LCI's own docs. Claims labelled by evidence and pinned to an LCI commit. |
 | `reconverse-*.md` | Investigation and design notes: QD latency at scale, trace modules not writing at shutdown, a core-interference monitor. |
 | `SKILL.md` | Entry point when this repo is used as a Claude skill: when to use the notes and which file to read for which task. |
 
