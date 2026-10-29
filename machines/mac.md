@@ -241,7 +241,7 @@ reconverse is `lcrun -n <procs> env DYLD_LIBRARY_PATH=<build>/lib ./app
   `reconverse-darwin-arm8` before testing. Project memory is separate.
 - `~/software/seedbalancing/` — seed balancing in reconverse; design doc
   SEEDLB_DESIGN.md.
-- `~/software/charm-notes/` — clone of UIUC-PPL/charm-notes (the shared
+- `~/software/charm-notes/` — clone of charmplusplus/charm-notes (moved from UIUC-PPL 2026-10-29) (the shared
   practitioner notes + this machine profile); pull before appending,
   push after. Old copies in ~/software/tutorialcharmclaude/notes/ are
   pointer stubs.
