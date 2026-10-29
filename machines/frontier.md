@@ -938,3 +938,13 @@ Measured in-job (perf 6.4.0, kernel 6.4.0-150700.53.78-default, glibc 2.38):
   sped it up 1.48x on Anvil (kernel 4.18, glibc 2.28), changes page-fault counts by 0-3% here and timed results by -4%
   to +9% (2026-10-12, 2 nodes, Task Bench, SSSP, FoF3 80M). Do not carry the Anvil malloc result to this machine
   without measuring it.
+
+## AMPI on reconverse: run with address space randomization off (2026-10-28)
+
+AMPI jobs whose ranks migrate between processes, or restart from a checkpoint in new processes, must run with
+address space randomization off: a migrated or restored thread resumes on a stack holding return addresses into the
+program and into libreconverse, which are valid only if the code sits at the same address in every process. Under
+Slurm the prefix goes INSIDE the launch, after srun's arguments: `srun ... setarch x86_64 -R ./app +pe N`. slurmd
+starts the tasks, so `setarch -R srun ...` sets the flag on srun only and the tasks run randomized. As of charm branch
+`reconverse-launch-setarch` (2026-10-28), `testrun` (every `make test`, including `TESTRUN_LAUNCHER`) and `ampirun`
+add the prefix automatically on Linux; opt out with `TESTRUN_VA_RANDOMIZATION=1` / `AMPIRUN_VA_RANDOMIZATION=1`.
