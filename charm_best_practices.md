@@ -3316,3 +3316,30 @@ envelope. Fixed on branch `inline-trace-ep` of charm (charm PR #4108 against
 runtime shows a solid `dummy_thread_ep` band where inline calls run, that is
 what it is; the time is real, only the label is wrong. Found in the AMT
 Barnes-Hut benchmark, whose idle-callback walks use inline entries.
+
+## Work run from idle callbacks is invisible to quiescence detection (2026-10-28, AMT-BH work stealing)
+
+Walks queued per TreePiece and run from `CcdPROCESSOR_BEGIN_IDLE` /
+`STILL_IDLE` callbacks are no messages, so `CkStartQD` saw no traffic while
+walks were still queued and the hang check ended the run mid-traversal (two
+and four PEs at 400k, step 0, every time). Fix (Ritvik, cbcdc72 on
+ritvikrao/AMT-BH-benchmark): count each queued unit as created with
+`QdCreate(n)` when it is published and as processed with `QdProcess(1)` on
+the PE that runs it, so QD waits for the queues to drain. Declare the two as
+`void QdCreate(int); void QdProcess(int);` (ck.C). Also: the idle callbacks
+are installed only in processes of more than one PE, so a feature that
+depends on them must turn itself off, with a notice, when `CkMyNodeSize()`
+is 1, or its queued work never runs.
+
+## A custom reducer over sparse lists must not expand to the key space per merge (2026-10-28, AMT-BH histogram)
+
+The first sparse-histogram reducer allocated and zeroed `maxBin+1`
+accumulators for every merge. With 4016 bins on one node that is 160 KB and
+invisible; the bins are the TreePieces, so at 100 nodes it is 600k entries,
+24 MB touched at every process root and inner node of the reduction tree
+per step to combine a few hundred entries. Contributions built in key order
+are sorted, and a reducer that emits in key order keeps them sorted, so the
+merge is a k-way merge of sorted lists: cost proportional to the entries,
+no allocation proportional to the keys (63bbf44 on the fork). Rule: check a
+reducer's cost against the key count at the target scale, not at the test
+scale where it was written.
