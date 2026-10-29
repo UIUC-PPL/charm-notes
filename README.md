@@ -22,26 +22,52 @@ documentation model:
 | `charm_best_practices.md` | Accumulated practitioner lessons: message-memory invariants, scheduler/runtime pitfalls, SMP and launch-layout traps, group/array creation ordering, reduction cost models, benchmarking discipline, macOS-specific hazards. |
 | `syntax_quick_ref.md` | Quick syntax lookup: chares, SDAG, groups, nodegroups, reductions, custom reducers, callbacks. |
 | `machines/*.md` | Per-machine environment profiles (folder layout, installed runtimes, run idioms, machine-specific hazards). Each machine loads only its own profile. |
+| `reconverse-*.md` | Investigation and design notes: QD latency at scale, trace modules not writing at shutdown, a core-interference monitor. |
+| `SKILL.md` | Entry point when this repo is used as a Claude skill: when to use the notes and which file to read for which task. |
 
-## Using these notes with Claude Code on a new machine
+## Using these notes as a Claude skill
+
+The repo root is a skill: `SKILL.md` tells Claude when the notes apply and
+how to find the right file, so Claude loads them automatically in any
+conversation about Charm++, Converse, Reconverse, or LCI.
+
+### Claude Code (recommended on machines where you build and run)
 
 1. Clone this repo somewhere stable, e.g. `~/software/charm-notes`.
-2. In `~/.claude/CLAUDE.md`, import the machine profile and point at the
-   notes:
+2. Link it in as a personal skill, so `git pull` keeps the skill current:
+
+   ```sh
+   mkdir -p ~/.claude/skills
+   ln -s ~/software/charm-notes ~/.claude/skills/charm-notes
+   ```
+
+3. Optionally, still import the machine profile in `~/.claude/CLAUDE.md`,
+   so the machine facts are always loaded rather than loaded on demand:
 
    ```markdown
    @~/software/charm-notes/machines/<this-machine>.md
-
-   ## Charm++ / Converse work
-   When the task involves Charm++, Converse, or reconverse, read
-   ~/software/charm-notes/charm_best_practices.md and
-   ~/software/charm-notes/syntax_quick_ref.md before writing code.
-   Update charm_best_practices.md (commit + push) when a session earns
-   a general lesson.
    ```
 
-3. If no profile exists for the machine yet, copy an existing one as a
+   The older "read charm_best_practices.md before writing code" line is no
+   longer needed; the skill does that.
+4. If no profile exists for the machine yet, copy an existing one as a
    template and fill it in.
+
+Because the skill is a live clone, sessions can append lessons and push
+them, per the contribution policy below.
+
+### claude.ai (web, desktop and mobile apps)
+
+1. Build the package from the committed state of the repo:
+   `scripts/package-skill.sh` writes `dist/charm-notes.skill`.
+2. In claude.ai, open Settings → Capabilities, make sure code execution is
+   on, and upload `dist/charm-notes.skill` under Skills. (On Team and
+   Enterprise plans an admin may need to allow custom skills.)
+3. The skill is then available in every new chat.
+
+An uploaded skill is a snapshot: re-run the script and re-upload (replacing
+the old one) after the notes change. In claude.ai the notes are read-only,
+so Claude drafts new lessons for you to commit rather than editing them.
 
 ## Contribution policy
 
