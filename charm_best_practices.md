@@ -3307,12 +3307,22 @@ balancing step; a tool must not turn it back on).
   constructor entry: `CkArray::insertElement` allocates, then
   `invokeEntry(elt, msg, ctorIdx)` runs the constructor through the entry
   table. Reading `obj->ckGetID()` (myRec) there segfaults; reading
-  `thisArrayID` gives garbage. Key the element by the entry's chare type
-  (`_entryTable[ep]->chareIdx`) and the index ints in `CmiObjId`, which
-  are valid for every call.
+  `thisArrayID` gives garbage. Do not read the element from that hook.
+  The first version keyed by the entry's chare type
+  (`_entryTable[ep]->chareIdx`) plus the `CmiObjId` index ints; review
+  (Aditya Bhosale, 2026-10-30) found that this merges two arrays of one
+  class and splits a derived class from its base. The merged version
+  (PR #4104, fixed in the recharm session) keys by what the load database
+  uses, the array's location-manager group index and the element id
+  within it, so a client can match the trace reply with `LBObjLoads`
+  element by element; it also attributes `[threaded]` entries after
+  their first suspend and TCharm threads to the owning element, and runs
+  its collection reduction on its own group so it cannot pair with the
+  module's 1-second utilization reduction (a shared group let the two
+  reductions pair up and abort under error checking).
 - liveViz creates a bound array `LiveVizBoundElement` with the same
-  indices as the user's array; a per-chare-type key keeps them apart (and
-  they report zero time).
+  indices as the user's array; it is a separate collection, so it gets
+  its own key (and reports zero time).
 - `pkill -f "app +pe 2"` matches nothing: `-f` takes an extended regex and
   `+` is a quantifier. Use `pkill -f "app -k 4"` or escape `\+`.
 
